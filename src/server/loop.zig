@@ -1,47 +1,44 @@
-const std = @import("std");
-const posix = std.posix;
-const linux = std.os.linux;
+const Epoll = @import("../net/epoll.zig").Epoll;
+const Event = @import("../net/epoll.zig").Event;
+const Listener = @import("../net/listener.zig").Listener;
+const socket = @import("../net/socket.zig");
 
 const Connection = @import("connection.zig").Connection;
 const parser = @import("../http/parser.zig");
-const Response = @import("../http/response.zig").Response;
+const response = @import("../http/response.zig");
+const Response = response.Response;
 
 const MAX_EVENTS = 128;
 const MAX_CONNECTIONS = 64;
 
 pub const Loop = struct {
-    epfd: posix.fd_t,
-    listen_fd: posix.fd_t,
+    epoll: Epoll,
+    listener: *Listener,
     connections: [MAX_CONNECTIONS]?Connection,
 
-    pub fn init(listen_fd: posix.fd_t) !Loop {
-        const epfd = try posix.epoll_create1(0);
-
-        var ev = linux.epoll_event{
-            .events = linux.EPOLL.IN,
-            .data = .{ .fd = listen_fd },
-        };
-        try posix.epoll_ctl(epfd, linux.EPOLL.CTL_ADD, listen_fd, &ev);
+    pub fn init(listener: *Listener) !Loop {
+        var epoll = try Epoll.init();
+        try epoll.add(listener.fd);
 
         return .{
-            .epfd = epfd,
-            .listen_fd = listen_fd,
+            .epoll = epoll,
+            .listener = listener,
             .connections = [_]?Connection{null} ** MAX_CONNECTIONS,
         };
     }
 
     pub fn deinit(self: *Loop) void {
-        posix.close(self.epfd);
+        self.epoll.deinit();
     }
 
-    pub fn run(self: *Loop) !void {
-        var events: [MAX_EVENTS]linux.epoll_event = undefined;
+    pub fn run(self: *Loop) void {
+        var events: [MAX_EVENTS]Event = undefined;
 
         while (true) {
-            const n = posix.epoll_wait(self.epfd, &events, -1);
+            const n = self.epoll.wait(&events);
 
             for (events[0..n]) |ev| {
-                if (ev.data.fd == self.listen_fd) {
+                if (ev.data.fd == self.listener.fd) {
                     self.accept();
                 } else {
                     self.handle(ev.data.fd);
@@ -52,40 +49,27 @@ pub const Loop = struct {
 
     fn accept(self: *Loop) void {
         while (true) {
-            const fd = posix.accept(
-                self.listen_fd,
-                null,
-                null,
-                posix.SOCK.NONBLOCK,
-            ) catch |err| switch (err) {
-                error.WouldBlock => return,
-                else => return,
-            };
+            const fd = self.listener.accept() catch return;
+            if (fd == null) return;
 
             if (self.findSlot()) |slot| {
-                slot.* = Connection.init(fd);
-
-                var ev = linux.epoll_event{
-                    .events = linux.EPOLL.IN,
-                    .data = .{ .fd = fd },
-                };
-                posix.epoll_ctl(self.epfd, linux.EPOLL.CTL_ADD, fd, &ev) catch {
-                    posix.close(fd);
+                slot.* = Connection.init(fd.?);
+                self.epoll.add(fd.?) catch {
+                    socket.close(fd.?);
                     slot.* = null;
                 };
             } else {
-                posix.close(fd);
+                socket.close(fd.?);
             }
         }
     }
 
-    fn handle(self: *Loop, fd: posix.fd_t) void {
+    fn handle(self: *Loop, fd: i32) void {
         const conn = self.findConnection(fd) orelse return;
 
         switch (conn.state) {
             .reading => self.handleRead(conn),
             .writing => self.handleWrite(conn),
-            .closing => self.closeConnection(conn),
         }
     }
 
@@ -100,7 +84,7 @@ pub const Loop = struct {
             return;
         }
 
-        const request = parser.parse(conn.readData()) catch |err| switch (err) {
+        const req = parser.parse(conn.readSlice()) catch |err| switch (err) {
             error.Incomplete => return,
             else => {
                 self.closeConnection(conn);
@@ -108,15 +92,12 @@ pub const Loop = struct {
             },
         };
 
-        _ = request;
+        const res = handleRequest(req);
+        const len = response.serialize(res, &conn.write_buf);
 
-        var buf: [1024]u8 = undefined;
-        const response = Response{
-            .status = .ok,
-            .body = "hello",
-        };
-        const data = response.serialize(&buf);
-        conn.setResponse(data);
+        conn.write_len = len;
+        conn.write_pos = 0;
+        conn.state = .writing;
 
         self.handleWrite(conn);
     }
@@ -134,7 +115,8 @@ pub const Loop = struct {
 
     fn closeConnection(self: *Loop, conn: *Connection) void {
         const fd = conn.fd;
-        conn.close(self.epfd);
+        self.epoll.del(fd);
+        conn.close();
 
         for (&self.connections) |*slot| {
             if (slot.*) |*c| {
@@ -153,7 +135,7 @@ pub const Loop = struct {
         return null;
     }
 
-    fn findConnection(self: *Loop, fd: posix.fd_t) ?*Connection {
+    fn findConnection(self: *Loop, fd: i32) ?*Connection {
         for (&self.connections) |*slot| {
             if (slot.*) |*conn| {
                 if (conn.fd == fd) return conn;
@@ -162,3 +144,11 @@ pub const Loop = struct {
         return null;
     }
 };
+
+fn handleRequest(req: parser.Request) Response {
+    _ = req;
+    return .{
+        .status = .ok,
+        .body = "hello",
+    };
+}

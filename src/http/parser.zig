@@ -1,5 +1,5 @@
 const std = @import("std");
-const Request = @import("request.zig").Request;
+pub const Request = @import("request.zig").Request;
 const Method = @import("request.zig").Method;
 
 pub const ParseError = error{
