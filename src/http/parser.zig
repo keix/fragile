@@ -93,29 +93,53 @@ fn parseProtocol(s: []const u8) ?Protocol {
     return null;
 }
 
+pub const Header = struct {
+    name: []const u8,
+    value: []const u8,
+};
+
+/// Parse header line: "Name: value"
+/// Strict. Colon required. Exactly one SP after colon.
+pub fn parseHeaderLine(line: []const u8) Error!Header {
+    // Find colon
+    const colon = std.mem.indexOf(u8, line, ":") orelse
+        return error.InvalidHeader;
+
+    // Name must not be empty
+    if (colon == 0)
+        return error.InvalidHeader;
+
+    const name = line[0..colon];
+
+    // Must have SP after colon
+    if (colon + 1 >= line.len)
+        return error.InvalidHeader;
+
+    if (line[colon + 1] != ' ')
+        return error.InvalidHeader;
+
+    // Value starts after ": "
+    const value = line[colon + 2 ..];
+
+    return .{
+        .name = name,
+        .value = value,
+    };
+}
+
 fn findHost(headers: []const u8) Error![]const u8 {
     var iter = std.mem.splitSequence(u8, headers, "\r\n");
 
     while (iter.next()) |line| {
         if (line.len == 0) continue;
 
-        const colon = std.mem.indexOf(u8, line, ":") orelse
-            return error.InvalidHeader;
+        const header = try parseHeaderLine(line);
 
-        const name = line[0..colon];
-
-        if (std.ascii.eqlIgnoreCase(name, "Host")) {
-            var value = line[colon + 1 ..];
-
-            // trim leading OWS (optional whitespace)
-            while (value.len > 0 and (value[0] == ' ' or value[0] == '\t')) {
-                value = value[1..];
-            }
-
-            if (value.len == 0)
+        if (std.ascii.eqlIgnoreCase(header.name, "Host")) {
+            if (header.value.len == 0)
                 return error.MissingHost;
 
-            return value;
+            return header.value;
         }
     }
 
