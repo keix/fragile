@@ -17,6 +17,8 @@ Fragile accepts bytes. It defines boundaries. It rejects ambiguity.
 > No libc.  
 > Boundary is the kernel.
 
+At the lowest layer, everything looks fragile. That is why nothing breaks.
+
 ## Requirements
 - Zig 0.15.2
 - Linux (epoll; Tested with Gentoo 6.12.21)
