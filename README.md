@@ -17,6 +17,16 @@ Fragile accepts bytes. It defines boundaries. It rejects ambiguity.
 > No libc.  
 > Boundary is the kernel.
 
+## Requirements
+- Zig 0.15.2
+- Linux (epoll; Tested with Gentoo 6.12.21)
+
+## Running
+```
+zig build run
+curl http://localhost:8080
+```
+
 ## Architecture
 Fragile is structured as a strict separation of concerns.  
 Each layer has a single responsibility and does not depend on higher layers.
@@ -95,3 +105,6 @@ main
 Each layer does exactly one thing. Nothing more.  
 The structure is not an implementation detail. It is the system.
 
+## License
+Copyright KEI SAWAMURA 2026.  
+Fragile is licensed under the MIT License. Use, copy, and modify freely.
