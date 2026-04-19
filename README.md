@@ -14,6 +14,9 @@ What appears fragile is precision.
 The behavior is fixed. The boundaries are defined. Nothing is implicit.  
 Fragile accepts bytes. It defines boundaries. It rejects ambiguity.
 
+> No libc.  
+> Boundary is the kernel.
+
 ## Architecture
 Fragile is structured as a strict separation of concerns.  
 Each layer has a single responsibility and does not depend on higher layers.
@@ -25,16 +28,30 @@ Each layer has a single responsibility and does not depend on higher layers.
 - `http/request` defines the shape of a request. It contains no behavior.
 - `http/response` defines the response and handles serialization.
 
-Data flows in one direction:
+### Data flows
 
 ```mermaid
 flowchart LR
     A[bytes] --> B[parser]
     B -->|valid| C[Request]
     B -->|invalid| D[reject]
-    C --> E[Connection<br>state machine ]
+    C --> E[handler]
     E --> F[Response]
     F --> G[bytes]
+```
+
+### Lifecycle
+```mermaid
+flowchart LR
+    E[epoll wat] -->|event| L[listener]
+    L -->|accept| FD[fd]
+    FD -->|init| C[Connection]
+
+    C -->|EPOLLIN| R[reading]
+    R -->|parse success| W[writing]
+    R -->|invalid| X[closing]
+
+    W -->|write complete| X
 ```
 
 No layer guesses intent.  
@@ -43,29 +60,37 @@ If the structure is not defined, it is rejected.
 
 This architecture makes boundaries explicit.
 
-The structure is:
+### Structure
 
 ```
-  src/
-    main.zig           -- entry point, listener setup
-    http/
-      parser.zig       -- parse() function (pure, no IO)
-      request.zig      -- Request struct   (pure data)
-      response.zig     -- Response struct + serialize
-    server/
-      connection.zig   -- Connection state machine
-      loop.zig         -- epoll loop (flows data, no logic)
-````
+src/
+  main.zig
+  net/
+    epoll.zig       -- wait, add, del
+    listener.zig    -- init, accept
+    socket.zig      -- read, write, close
+  server/
+    connection.zig  -- state machine
+    loop.zig        -- flow control
+  http/
+    parser.zig      -- bytes → Request
+    request.zig     -- data
+    response.zig    -- Response → bytes
+```
 
-Dependency graph:
+### Dependency
 
 ```
-  main
-   └─ server/loop
-       ├─ server/connection
-       └─ http/parser
-           └─ http/request
-````
+main
+ └─ server/loop
+     ├─ net/epoll
+     ├─ net/listener
+     ├─ net/socket
+     ├─ server/connection
+     │   └─ net/socket
+     └─ http/parser
+         └─ http/request
+```
 
 Each layer does exactly one thing. Nothing more.  
 The structure is not an implementation detail. It is the system.
