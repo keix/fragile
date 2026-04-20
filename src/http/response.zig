@@ -28,6 +28,11 @@ pub const Response = struct {
     body: []const u8,
 };
 
+pub const bad_request: Response = .{
+    .status = .bad_request,
+    .body = "Bad Request",
+};
+
 /// Serialize Response into bytes. Pure function.
 pub fn serialize(res: Response, out: []u8) usize {
     var pos: usize = 0;

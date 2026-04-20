@@ -108,14 +108,14 @@ pub const Loop = struct {
         const req = parser.parse(conn.readSlice()) catch |err| switch (err) {
             error.Incomplete => return,
             else => {
-                self.closeConnection(conn);
+                self.sendError(conn);
                 return;
             },
         };
 
         // gates: pass or reject
         gate.apply(self.gates, req) catch {
-            self.closeConnection(conn);
+            self.sendError(conn);
             return;
         };
 
@@ -143,6 +143,14 @@ pub const Loop = struct {
         if (done) {
             self.closeConnection(conn);
         }
+    }
+
+    fn sendError(self: *Loop, conn: *Connection) void {
+        const len = response.serialize(response.bad_request, &conn.write_buf);
+        conn.write_len = len;
+        conn.write_pos = 0;
+        conn.state = .writing;
+        self.handleWrite(conn);
     }
 
     fn closeConnection(self: *Loop, conn: *Connection) void {
