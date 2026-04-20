@@ -9,19 +9,7 @@
 // non-goals:
 //   - no I/O
 
-pub const Status = enum(u16) {
-    ok = 200,
-    bad_request = 400,
-    not_found = 404,
-
-    pub fn phrase(self: Status) []const u8 {
-        return switch (self) {
-            .ok => "OK",
-            .bad_request => "Bad Request",
-            .not_found => "Not Found",
-        };
-    }
-};
+pub const Status = @import("status.zig").Status;
 
 pub const Response = struct {
     status: Status,
