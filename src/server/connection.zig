@@ -1,3 +1,14 @@
+// responsibility:
+//   holds connection state and buffers
+//
+// guarantees:
+//   - explicit state transitions
+//   - exposes state, does not decide
+//
+// non-goals:
+//   - no protocol logic
+//   - no parsing
+
 const socket = @import("../net/socket.zig");
 
 pub const State = enum {

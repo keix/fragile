@@ -1,3 +1,13 @@
+// responsibility:
+//   raw fd operations (read, write, close)
+//
+// guarantees:
+//   - direct syscall wrapper
+//   - no buffering
+//
+// non-goals:
+//   - no protocol awareness
+
 const posix = @import("std").posix;
 
 pub fn close(fd: posix.fd_t) void {

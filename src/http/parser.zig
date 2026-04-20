@@ -1,3 +1,19 @@
+// responsibility:
+//   transforms bytes into Request
+//
+// guarantees:
+//   - pure function
+//   - no allocation
+//   - no I/O
+//   - rejects invalid input
+//
+// constraints:
+//   - input must be complete (\r\n\r\n present)
+//
+// non-goals:
+//   - no ambiguity resolution
+//   - no partial parsing
+
 const std = @import("std");
 const request = @import("request.zig");
 

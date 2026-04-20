@@ -1,3 +1,14 @@
+// responsibility:
+//   defines Handler boundary (Request → Response)
+//
+// guarantees:
+//   - pure interface
+//   - Context carries capabilities only
+//
+// non-goals:
+//   - no I/O in interface
+//   - no behavior in Context
+
 pub const Request = @import("request.zig").Request;
 pub const Response = @import("response.zig").Response;
 

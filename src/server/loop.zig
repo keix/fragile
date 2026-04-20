@@ -1,3 +1,14 @@
+// responsibility:
+//   drives epoll loop and dispatches events
+//
+// guarantees:
+//   - calls handler for each request
+//   - manages connection lifecycle
+//
+// non-goals:
+//   - no parsing logic
+//   - no response generation
+
 const Epoll = @import("../net/epoll.zig").Epoll;
 const Event = @import("../net/epoll.zig").Event;
 const Listener = @import("../net/listener.zig").Listener;

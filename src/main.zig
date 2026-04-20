@@ -1,3 +1,12 @@
+// responsibility:
+//   wires all layers and starts the server
+//
+// guarantees:
+//   - single entry point
+//
+// non-goals:
+//   - no logic beyond wiring
+
 const Listener = @import("net/listener.zig").Listener;
 const Loop = @import("server/loop.zig").Loop;
 const handler = @import("http/handler.zig");
