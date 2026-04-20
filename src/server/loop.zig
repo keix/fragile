@@ -2,8 +2,8 @@
 //   drives epoll loop and dispatches events
 //
 // guarantees:
-//   - calls handler for each request
 //   - manages connection lifecycle
+//   - dispatches parsed requests to gates and handler
 //
 // non-goals:
 //   - no parsing logic
@@ -105,7 +105,7 @@ pub const Loop = struct {
             return;
         }
 
-        const req = parser.parse(conn.readSlice()) catch |err| switch (err) {
+        const req = parser.parse(conn.buffer()) catch |err| switch (err) {
             error.Incomplete => return,
             else => {
                 self.sendError(conn);
@@ -120,18 +120,14 @@ pub const Loop = struct {
         };
 
         var ctx = Context{};
+        _ = &ctx;
+
         const res = self.handler(&ctx, req) catch {
             self.closeConnection(conn);
             return;
         };
 
-        const len = response.serialize(res, &conn.write_buf);
-
-        conn.write_len = len;
-        conn.write_pos = 0;
-        conn.state = .writing;
-
-        self.handleWrite(conn);
+        self.sendResponse(conn, res);
     }
 
     fn handleWrite(self: *Loop, conn: *Connection) void {
@@ -145,12 +141,16 @@ pub const Loop = struct {
         }
     }
 
-    fn sendError(self: *Loop, conn: *Connection) void {
-        const len = response.serialize(response.bad_request, &conn.write_buf);
+    fn sendResponse(self: *Loop, conn: *Connection, res: Response) void {
+        const len = response.serialize(res, &conn.write_buf);
         conn.write_len = len;
         conn.write_pos = 0;
         conn.state = .writing;
         self.handleWrite(conn);
+    }
+
+    fn sendError(self: *Loop, conn: *Connection) void {
+        self.sendResponse(conn, response.bad_request);
     }
 
     fn closeConnection(self: *Loop, conn: *Connection) void {

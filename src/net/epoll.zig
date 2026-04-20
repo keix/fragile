@@ -3,6 +3,7 @@
 //
 // guarantees:
 //   - no abstraction beyond syscall
+//   - assumes non-blocking file descriptors
 //   - no state interpretation
 //
 // non-goals:
@@ -30,7 +31,7 @@ pub const Epoll = struct {
 
     pub fn add(self: *Epoll, fd: posix.fd_t) !void {
         var ev = Event{
-            .events = linux.EPOLL.IN,
+            .events = linux.EPOLL.IN | linux.EPOLL.HUP | linux.EPOLL.ERR,
             .data = .{ .fd = fd },
         };
         try posix.epoll_ctl(self.fd, linux.EPOLL.CTL_ADD, fd, &ev);

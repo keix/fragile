@@ -25,6 +25,6 @@ pub fn main() !void {
 fn handleRequest(_: *handler.Context, _: handler.Request) !Response {
     return .{
         .status = .ok,
-        .body = "hello",
+        .body = "Hello, World!!",
     };
 }
