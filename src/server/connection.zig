@@ -54,7 +54,7 @@ pub const Connection = struct {
         return self.write_pos >= self.write_len;
     }
 
-    pub fn readSlice(self: *Connection) []const u8 {
+    pub fn buffer(self: *Connection) []const u8 {
         return self.read_buf[0..self.read_pos];
     }
 

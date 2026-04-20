@@ -23,17 +23,24 @@ At the lowest layer, everything looks fragile. That is why nothing breaks.
 - Zig 0.15.2
 - Linux (epoll; Tested with Gentoo 6.12.21)
 
-## Reference
-RFC 9112 — HTTP/1.1 Message Syntax  
-https://www.rfc-editor.org/rfc/rfc9112
-
-Fragile defines a strict subset of this specification.
-
 ## Running
 ```
 zig build run
 curl http://localhost:8080
 ```
+
+## Specification
+HTTP is a contract over bytes.  
+It defines how text is structured, not how it is interpreted.
+
+RFC 9112 — HTTP/1.1 Message Syntax  
+https://www.rfc-editor.org/rfc/rfc9112
+
+Fragile defines a strict subset of this specification.   
+Ambiguity is not tolerated.
+
+Fragile - HTTP/1.1 Strict (draft specification)  
+https://fragile-v1.notion.site/
 
 ## Architecture
 Fragile is structured as a strict separation of concerns.  
@@ -51,16 +58,18 @@ Each layer has a single responsibility and does not depend on higher layers.
 flowchart LR
     A[bytes] --> B[parser]
     B -->|valid| C[Request]
-    B -->|invalid| D[reject]
-    C --> E[handler]
-    E --> F[Response]
-    F --> G[bytes]
+    B -->|invalid| D[close]
+    C --> E[gate]
+    E -->|pass| F[handler]
+    E -->|reject| D
+    F --> G[Response]
+    G --> H[bytes]
 ```
 
 ### Lifecycle
 ```mermaid
 flowchart LR
-    E[epoll wiat] -->|event| L[listener]
+    E[epoll] -->|event| L[listener]
     L -->|accept| FD[fd]
     FD -->|init| C[Connection]
 
@@ -89,11 +98,14 @@ This architecture makes boundaries explicit.
       connection.zig   -- holds connection state and buffers
       loop.zig         -- drives epoll loop and dispatches events
     http/
-      status.zig       -- protocol data (200, 400, 404...)
+      parser.zig       -- protocol dispatch facade
       request.zig      -- defines HTTP request structures
       response.zig     -- defines Response and serializes to bytes
-      parser.zig       -- transforms bytes into Request
+      status.zig       -- protocol data (200, 400, 404...)
       handler.zig      -- defines Handler boundary
+      gate.zig         -- pass or reject decisions
+      http1/
+        parser.zig     -- HTTP/1.1 parsing logic
 ```
 
 ### Dependency
@@ -105,7 +117,10 @@ main
      ├─ net/socket
      ├─ server/connection
      │   └─ net/socket
-     └─ http/parser
+     ├─ http/parser
+     │   └─ http/http1/parser
+     │       └─ http/request
+     └─ http/gate
          └─ http/request
 ```
 
