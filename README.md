@@ -33,14 +33,24 @@ curl http://localhost:8080
 HTTP is a contract over bytes.  
 It defines how text is structured, not how it is interpreted.
 
-RFC 9112 — HTTP/1.1 Message Syntax  
-https://www.rfc-editor.org/rfc/rfc9112
-
-Fragile defines a strict subset of this specification.   
-Ambiguity is not tolerated.
-
 Fragile - HTTP/1.1 Strict (draft specification)  
 https://fragile-v1.notion.site/
+
+Fragile defines a strict subset of this specification.  
+Ambiguity is not tolerated.
+
+### Reference
+RFC 9112 — HTTP/1.1  
+https://www.rfc-editor.org/rfc/rfc9112
+
+RFC 9110 - HTTP Semantics  
+https://www.rfc-editor.org/rfc/rfc9110
+
+RFC 9111 - HTTP Caching  
+https://www.rfc-editor.org/rfc/rfc9111
+
+This implementation defines message syntax (RFC 9112).  
+Semantics (RFC 9110) and caching (RFC 9111) are intentionally out of scope.
 
 ## Architecture
 Fragile is structured as a strict separation of concerns.  
