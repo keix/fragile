@@ -1,3 +1,13 @@
+// responsibility:
+//   binds port and accepts connections
+//
+// guarantees:
+//   - non-blocking accept
+//   - returns raw fd
+//
+// non-goals:
+//   - does not manage connection lifecycle
+
 const std = @import("std");
 const posix = std.posix;
 

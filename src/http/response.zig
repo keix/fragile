@@ -1,3 +1,14 @@
+// responsibility:
+//   defines Response and serializes to bytes
+//
+// guarantees:
+//   - pure function (serialize)
+//   - writes to provided buffer
+//   - no allocation
+//
+// non-goals:
+//   - no I/O
+
 pub const Status = enum(u16) {
     ok = 200,
     bad_request = 400,
@@ -15,6 +26,11 @@ pub const Status = enum(u16) {
 pub const Response = struct {
     status: Status,
     body: []const u8,
+};
+
+pub const bad_request: Response = .{
+    .status = .bad_request,
+    .body = "Bad Request",
 };
 
 /// Serialize Response into bytes. Pure function.

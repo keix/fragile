@@ -74,19 +74,20 @@ This architecture makes boundaries explicit.
 
 ### Structure
 ```
-src/
-  main.zig
-  net/
-    epoll.zig       -- wait, add, del
-    listener.zig    -- init, accept
-    socket.zig      -- read, write, close
-  server/
-    connection.zig  -- state machine
-    loop.zig        -- flow control
-  http/
-    parser.zig      -- bytes → Request
-    request.zig     -- data
-    response.zig    -- Response → bytes
+  src/
+    main.zig           -- wires all layers
+    net/
+      epoll.zig        -- thin wrapper around epoll syscalls
+      listener.zig     -- binds port and accepts connections
+      socket.zig       -- raw fd operations
+    server/
+      connection.zig   -- holds connection state and buffers
+      loop.zig         -- drives epoll loop and dispatches events
+    http/
+      request.zig      -- defines HTTP request structures
+      response.zig     -- defines Response and serializes to bytes
+      parser.zig       -- transforms bytes into Request
+      handler.zig      -- defines Handler boundary
 ```
 
 ### Dependency

@@ -1,10 +1,27 @@
+// responsibility:
+//   transforms bytes into Request
+//
+// guarantees:
+//   - pure function
+//   - no allocation
+//   - no I/O
+//   - rejects invalid input
+//
+// constraints:
+//   - headers must be complete (\r\n\r\n present)
+//   - body must match Content-Length
+//
+// non-goals:
+//   - no ambiguity resolution
+//   - no chunked encoding
+
 const std = @import("std");
 const request = @import("request.zig");
 
 pub const Request = request.Request;
-pub const RequestLine = request.RequestLine;
 pub const Method = request.Method;
 pub const Protocol = request.Protocol;
+pub const Header = request.Header;
 
 pub const Error = error{
     Incomplete,
@@ -13,135 +30,123 @@ pub const Error = error{
     InvalidProtocol,
     InvalidRequestLine,
     InvalidHeader,
+    InvalidContentLength,
     MissingHost,
 };
 
 /// Parse HTTP/1.1 request. Pure function.
 pub fn parse(buf: []const u8) Error!Request {
+    // Find header end
     const header_end = std.mem.indexOf(u8, buf, "\r\n\r\n") orelse
         return error.Incomplete;
 
+    const body_start = header_end + 4;
+
+    // Parse request line
     const line_end = std.mem.indexOf(u8, buf[0..header_end], "\r\n") orelse
         return error.InvalidRequestLine;
 
-    const rl = try parseRequestLine(buf[0..line_end]);
-
-    const headers_start = line_end + 2;
-    const host = try findHost(buf[headers_start..header_end]);
-
-    return .{
-        .method = rl.method,
-        .path = rl.path,
-        .protocol = rl.protocol,
-        .host = host,
-    };
-}
-
-/// Parse request line: "METHOD SP PATH SP VERSION"
-/// Strict. One SP. Exact match.
-pub fn parseRequestLine(line: []const u8) Error!RequestLine {
-    // Method
-    const method_end = std.mem.indexOf(u8, line, " ") orelse
+    const method = parseMethod(buf[0..line_end]) orelse
         return error.InvalidMethod;
 
-    const method = parseMethod(line[0..method_end]) orelse
-        return error.InvalidMethod;
-
-    // Must be exactly one SP
-    if (method_end + 1 >= line.len)
+    const path = parsePath(buf[0..line_end]) orelse
         return error.InvalidPath;
 
-    const after_method = line[method_end + 1 ..];
-
-    // Path
-    const path_end = std.mem.indexOf(u8, after_method, " ") orelse
-        return error.InvalidPath;
-
-    if (path_end == 0)
-        return error.InvalidPath;
-
-    const path = after_method[0..path_end];
-
-    // Path must start with /
-    if (path[0] != '/')
-        return error.InvalidPath;
-
-    // Must be exactly one SP
-    if (path_end + 1 >= after_method.len)
+    const protocol = parseProtocol(buf[0..line_end]) orelse
         return error.InvalidProtocol;
 
-    const protocol_str = after_method[path_end + 1 ..];
+    // Parse headers
+    const headers_buf = buf[line_end + 2 .. header_end];
+    const host = findHeader(headers_buf, "Host") orelse
+        return error.MissingHost;
 
-    // Protocol must be exactly "HTTP/1.1"
-    const protocol = parseProtocol(protocol_str) orelse
-        return error.InvalidProtocol;
+    const content_length = parseContentLength(headers_buf) catch
+        return error.InvalidContentLength;
+
+    // Check body completeness
+    const body_len = content_length orelse 0;
+    if (buf.len < body_start + body_len)
+        return error.Incomplete;
+
+    const body = buf[body_start .. body_start + body_len];
 
     return .{
         .method = method,
         .path = path,
         .protocol = protocol,
+        .host = host,
+        .content_length = content_length,
+        .body = body,
     };
 }
 
-fn parseMethod(s: []const u8) ?Method {
-    if (std.mem.eql(u8, s, "GET")) return .GET;
+fn parseMethod(line: []const u8) ?Method {
+    if (std.mem.startsWith(u8, line, "GET ")) return .GET;
+    if (std.mem.startsWith(u8, line, "POST ")) return .POST;
     return null;
 }
 
-fn parseProtocol(s: []const u8) ?Protocol {
-    if (std.mem.eql(u8, s, "HTTP/1.1")) return .http11;
+fn parsePath(line: []const u8) ?[]const u8 {
+    const start = std.mem.indexOf(u8, line, " ") orelse return null;
+    const rest = line[start + 1 ..];
+    const end = std.mem.indexOf(u8, rest, " ") orelse return null;
+
+    const path = rest[0..end];
+    if (path.len == 0 or path[0] != '/') return null;
+
+    return path;
+}
+
+fn parseProtocol(line: []const u8) ?Protocol {
+    if (std.mem.endsWith(u8, line, " HTTP/1.1")) return .http11;
     return null;
 }
 
-pub const Header = struct {
-    name: []const u8,
-    value: []const u8,
-};
-
-/// Parse header line: "Name: value"
-/// Strict. Colon required. Exactly one SP after colon.
-pub fn parseHeaderLine(line: []const u8) Error!Header {
-    // Find colon
-    const colon = std.mem.indexOf(u8, line, ":") orelse
-        return error.InvalidHeader;
-
-    // Name must not be empty
-    if (colon == 0)
-        return error.InvalidHeader;
-
-    const name = line[0..colon];
-
-    // Must have SP after colon
-    if (colon + 1 >= line.len)
-        return error.InvalidHeader;
-
-    if (line[colon + 1] != ' ')
-        return error.InvalidHeader;
-
-    // Value starts after ": "
-    const value = line[colon + 2 ..];
-
-    return .{
-        .name = name,
-        .value = value,
-    };
-}
-
-fn findHost(headers: []const u8) Error![]const u8 {
+fn findHeader(headers: []const u8, name: []const u8) ?[]const u8 {
     var iter = std.mem.splitSequence(u8, headers, "\r\n");
 
     while (iter.next()) |line| {
         if (line.len == 0) continue;
 
-        const header = try parseHeaderLine(line);
+        const colon = std.mem.indexOf(u8, line, ":") orelse continue;
+        if (colon == 0) continue;
 
-        if (std.ascii.eqlIgnoreCase(header.name, "Host")) {
-            if (header.value.len == 0)
-                return error.MissingHost;
+        const hdr_name = line[0..colon];
+        if (!std.ascii.eqlIgnoreCase(hdr_name, name)) continue;
 
-            return header.value;
-        }
+        if (colon + 2 > line.len) continue;
+        if (line[colon + 1] != ' ') continue;
+
+        return line[colon + 2 ..];
     }
 
-    return error.MissingHost;
+    return null;
+}
+
+fn parseContentLength(headers: []const u8) !?usize {
+    const value = findHeader(headers, "Content-Length") orelse
+        return null;
+
+    return std.fmt.parseInt(usize, value, 10) catch
+        return error.InvalidContentLength;
+}
+
+/// Parse single header line (exported for gate use)
+pub fn parseHeaderLine(line: []const u8) Error!Header {
+    const colon = std.mem.indexOf(u8, line, ":") orelse
+        return error.InvalidHeader;
+
+    if (colon == 0)
+        return error.InvalidHeader;
+
+    if (colon + 2 > line.len)
+        return error.InvalidHeader;
+
+    if (line[colon + 1] != ' ')
+        return error.InvalidHeader;
+
+    return .{
+        .name = line[0..colon],
+        .value = line[colon + 2 ..],
+    };
 }

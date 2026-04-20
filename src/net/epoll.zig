@@ -1,3 +1,14 @@
+// responsibility:
+//   thin wrapper around epoll syscalls
+//
+// guarantees:
+//   - no abstraction beyond syscall
+//   - no state interpretation
+//
+// non-goals:
+//   - does not know HTTP
+//   - does not know Connection
+
 const std = @import("std");
 const posix = std.posix;
 const linux = std.os.linux;

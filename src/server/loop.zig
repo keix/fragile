@@ -1,3 +1,14 @@
+// responsibility:
+//   drives epoll loop and dispatches events
+//
+// guarantees:
+//   - calls handler for each request
+//   - manages connection lifecycle
+//
+// non-goals:
+//   - no parsing logic
+//   - no response generation
+
 const Epoll = @import("../net/epoll.zig").Epoll;
 const Event = @import("../net/epoll.zig").Event;
 const Listener = @import("../net/listener.zig").Listener;
@@ -7,10 +18,12 @@ const Connection = @import("connection.zig").Connection;
 const parser = @import("../http/parser.zig");
 const response = @import("../http/response.zig");
 const handler = @import("../http/handler.zig");
+const gate = @import("../http/gate.zig");
 
 const Handler = handler.Handler;
 const Context = handler.Context;
 const Response = response.Response;
+const Gate = gate.Gate;
 
 const MAX_EVENTS = 128;
 const MAX_CONNECTIONS = 64;
@@ -19,9 +32,10 @@ pub const Loop = struct {
     epoll: Epoll,
     listener: *Listener,
     handler: Handler,
+    gates: []const Gate,
     connections: [MAX_CONNECTIONS]?Connection,
 
-    pub fn init(listener: *Listener, h: Handler) !Loop {
+    pub fn init(listener: *Listener, gates: []const Gate, h: Handler) !Loop {
         var epoll = try Epoll.init();
         try epoll.add(listener.fd);
 
@@ -29,6 +43,7 @@ pub const Loop = struct {
             .epoll = epoll,
             .listener = listener,
             .handler = h,
+            .gates = gates,
             .connections = [_]?Connection{null} ** MAX_CONNECTIONS,
         };
     }
@@ -93,9 +108,15 @@ pub const Loop = struct {
         const req = parser.parse(conn.readSlice()) catch |err| switch (err) {
             error.Incomplete => return,
             else => {
-                self.closeConnection(conn);
+                self.sendError(conn);
                 return;
             },
+        };
+
+        // gates: pass or reject
+        gate.apply(self.gates, req) catch {
+            self.sendError(conn);
+            return;
         };
 
         var ctx = Context{};
@@ -122,6 +143,14 @@ pub const Loop = struct {
         if (done) {
             self.closeConnection(conn);
         }
+    }
+
+    fn sendError(self: *Loop, conn: *Connection) void {
+        const len = response.serialize(response.bad_request, &conn.write_buf);
+        conn.write_len = len;
+        conn.write_pos = 0;
+        conn.state = .writing;
+        self.handleWrite(conn);
     }
 
     fn closeConnection(self: *Loop, conn: *Connection) void {
