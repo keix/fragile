@@ -23,6 +23,12 @@ At the lowest layer, everything looks fragile. That is why nothing breaks.
 - Zig 0.15.2
 - Linux (epoll; Tested with Gentoo 6.12.21)
 
+## Reference
+RFC 9112 — HTTP/1.1 Message Syntax  
+https://www.rfc-editor.org/rfc/rfc9112
+
+Fragile defines a strict subset of this specification.
+
 ## Running
 ```
 zig build run
@@ -41,7 +47,6 @@ Each layer has a single responsibility and does not depend on higher layers.
 - `http/response` defines the response and handles serialization.
 
 ### Data flows
-
 ```mermaid
 flowchart LR
     A[bytes] --> B[parser]
@@ -84,6 +89,7 @@ This architecture makes boundaries explicit.
       connection.zig   -- holds connection state and buffers
       loop.zig         -- drives epoll loop and dispatches events
     http/
+      status.zig       -- protocol data (200, 400, 404...)
       request.zig      -- defines HTTP request structures
       response.zig     -- defines Response and serializes to bytes
       parser.zig       -- transforms bytes into Request
