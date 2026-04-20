@@ -6,6 +6,10 @@ const socket = @import("../net/socket.zig");
 const Connection = @import("connection.zig").Connection;
 const parser = @import("../http/parser.zig");
 const response = @import("../http/response.zig");
+const handler = @import("../http/handler.zig");
+
+const Handler = handler.Handler;
+const Context = handler.Context;
 const Response = response.Response;
 
 const MAX_EVENTS = 128;
@@ -14,15 +18,17 @@ const MAX_CONNECTIONS = 64;
 pub const Loop = struct {
     epoll: Epoll,
     listener: *Listener,
+    handler: Handler,
     connections: [MAX_CONNECTIONS]?Connection,
 
-    pub fn init(listener: *Listener) !Loop {
+    pub fn init(listener: *Listener, h: Handler) !Loop {
         var epoll = try Epoll.init();
         try epoll.add(listener.fd);
 
         return .{
             .epoll = epoll,
             .listener = listener,
+            .handler = h,
             .connections = [_]?Connection{null} ** MAX_CONNECTIONS,
         };
     }
@@ -92,7 +98,12 @@ pub const Loop = struct {
             },
         };
 
-        const res = handleRequest(req);
+        var ctx = Context{};
+        const res = self.handler(&ctx, req) catch {
+            self.closeConnection(conn);
+            return;
+        };
+
         const len = response.serialize(res, &conn.write_buf);
 
         conn.write_len = len;
@@ -144,11 +155,3 @@ pub const Loop = struct {
         return null;
     }
 };
-
-fn handleRequest(req: parser.Request) Response {
-    _ = req;
-    return .{
-        .status = .ok,
-        .body = "hello",
-    };
-}

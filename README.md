@@ -1,5 +1,5 @@
 # Fragile
-A Fragile is not fragile - It is a precisely defined HTTP/1.1 implementation in Zig.
+A Fragile is not fragile; an HTTP layer at the kernel boundary.
 
 ## Philosophy
 Most servers are permissive.  
@@ -55,7 +55,7 @@ flowchart LR
 ### Lifecycle
 ```mermaid
 flowchart LR
-    E[epoll wat] -->|event| L[listener]
+    E[epoll wiat] -->|event| L[listener]
     L -->|accept| FD[fd]
     FD -->|init| C[Connection]
 
@@ -73,7 +73,6 @@ If the structure is not defined, it is rejected.
 This architecture makes boundaries explicit.
 
 ### Structure
-
 ```
 src/
   main.zig
@@ -91,7 +90,6 @@ src/
 ```
 
 ### Dependency
-
 ```
 main
  └─ server/loop
@@ -106,6 +104,23 @@ main
 
 Each layer does exactly one thing. Nothing more.  
 The structure is not an implementation detail. It is the system.
+
+## Design
+No allocation in the HTTP core. Non-blocking I/O. Explicit state.
+
+Modules are composable.  
+They attach at defined boundaries. No module alters the core flow.
+
+The system exposes a single integration point:
+
+```
+Handler(Request) → Response
+```
+
+All extensions are implemented as handlers.
+
+Modules are independent. Modules do not share state.  
+Allocation, if any, is explicit and local. The core flow is fixed.
 
 ## License
 Copyright KEI SAWAMURA 2026.  
