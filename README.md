@@ -1,5 +1,5 @@
 # Fragile
-A Fragile is not fragile; an HTTP layer at the kernel boundary.
+Fragile is not fragile. It defines HTTP at the kernel boundary.
 
 ## Philosophy
 Most servers are permissive.  
@@ -51,6 +51,33 @@ https://www.rfc-editor.org/rfc/rfc9111
 
 This implementation defines message syntax (RFC 9112).  
 Semantics (RFC 9110) and caching (RFC 9111) are intentionally out of scope.
+
+## Scope
+Fragile defines a strict HTTP/1.1 message parser and responder.
+
+It accepts well-formed and unambiguous input.  
+Invalid or incomplete input is rejected.
+
+The implementation operates at the syntax level only.  
+It does not interpret message semantics.
+
+The following are in scope:
+
+- Request line parsing (method, path, protocol)
+- Header parsing (strict format)
+- Content-Length handling
+- Message completeness validation
+- Response serialization
+
+The following are out of scope:
+
+- HTTP semantics (RFC 9110)
+- Caching (RFC 9111)
+- Content interpretation (e.g. JSON, form, multipart)
+- Transfer encodings (e.g. chunked)
+- Connection reuse (keep-alive)
+
+Scope defines the protocol, not the architecture.
 
 ## Architecture
 Fragile is structured as a strict separation of concerns.  
@@ -153,6 +180,8 @@ All extensions are implemented as handlers.
 
 Modules are independent. Modules do not share state.  
 Allocation, if any, is explicit and local. The core flow is fixed.
+
+Fragile does not implement HTTP. It defines it.
 
 ## License
 Copyright KEI SAWAMURA 2026.  
