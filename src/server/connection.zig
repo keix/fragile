@@ -9,7 +9,7 @@
 //   - no protocol logic
 //   - no parsing
 
-const socket = @import("../net/socket.zig");
+const sys_fd = @import("../net/sys/fd.zig");
 
 pub const State = enum {
     reading,
@@ -42,20 +42,20 @@ pub const Connection = struct {
             return error.BufferFull;
         }
 
-        const n = try socket.read(self.fd, self.read_buf[self.read_pos..]);
+        const n = try sys_fd.read(self.fd, self.read_buf[self.read_pos..]);
         self.read_pos += n;
         return n;
     }
 
     pub fn write(self: *Connection) !bool {
         const remaining = self.write_buf[self.write_pos..self.write_len];
-        const n = try socket.write(self.fd, remaining);
+        const n = try sys_fd.write(self.fd, remaining);
         self.write_pos += n;
         return self.write_pos >= self.write_len;
     }
 
     pub fn close(self: *Connection) void {
-        socket.close(self.fd);
+        sys_fd.close(self.fd);
     }
 
     pub fn buffer(self: *Connection) []const u8 {

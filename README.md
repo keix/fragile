@@ -126,34 +126,43 @@ This architecture makes boundaries explicit.
 ### Structure
 ```
   src/
-    main.zig           -- wires all layers
+    main.zig             -- wires all layers
     net/
-      epoll.zig        -- thin wrapper around epoll syscalls
-      listener.zig     -- binds port and accepts connections
-      socket.zig       -- raw fd operations
+      sys/
+        epoll.zig        -- syscall remap (1:1)
+        fd.zig           -- syscall remap (read/write/close)
+        socket.zig       -- syscall remap (socket/bind/listen/accept)
+      listener.zig       -- composes syscalls into listening socket
     server/
-      connection.zig   -- holds connection state and buffers
-      loop.zig         -- drives epoll loop and dispatches events
+      connection.zig     -- holds connection state and buffers
+      loop.zig           -- drives epoll loop, defines policy
     http/
-      parser.zig       -- protocol dispatch facade
-      request.zig      -- defines HTTP request structures
-      response.zig     -- defines Response and serializes to bytes
-      status.zig       -- protocol data (200, 400, 404...)
-      handler.zig      -- defines Handler boundary
-      gate.zig         -- pass or reject decisions
+      parser.zig         -- protocol dispatch facade
+      request.zig        -- defines HTTP request structures
+      response.zig       -- defines Response and serializes to bytes
+      status.zig         -- protocol data (200, 400, 404...)
+      handler.zig        -- defines Handler boundary
+      gate.zig           -- pass or reject decisions
       http1/
-        parser.zig     -- HTTP/1.1 parsing logic
+        parser.zig       -- HTTP/1.1 parsing logic
+    payload/
+      payload.zig        -- payload type definition
+      json.zig           -- JSON parsing (stub)
+      form.zig           -- form-urlencoded parsing (stub)
+      multipart.zig      -- multipart/form-data parsing (stub)
 ```
 
 ### Dependency
 ```
 main
- └─ server/loop
-     ├─ net/epoll
-     ├─ net/listener
-     ├─ net/socket
+ └─ server/loop (policy)
+     ├─ net/sys/epoll
+     ├─ net/sys/fd
+     ├─ net/listener (composition)
+     │   ├─ net/sys/socket
+     │   └─ net/sys/fd
      ├─ server/connection
-     │   └─ net/socket
+     │   └─ net/sys/fd
      ├─ http/parser
      │   └─ http/http1/parser
      │       └─ http/request
@@ -161,7 +170,6 @@ main
          └─ http/request
 ```
 
-Each layer does exactly one thing. Nothing more.  
 The structure is not an implementation detail. It is the system.
 
 ## Design

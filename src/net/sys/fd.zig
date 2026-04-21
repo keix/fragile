@@ -1,12 +1,13 @@
 // responsibility:
-//   raw fd operations (read, write, close)
+//   syscall remap for fd operations
 //
 // guarantees:
-//   - direct syscall wrapper
-//   - no buffering
+//   - 1:1 syscall mapping
+//   - no policy
 //
 // non-goals:
-//   - no protocol awareness
+//   - no buffering
+//   - no interpretation
 
 const posix = @import("std").posix;
 
