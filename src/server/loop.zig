@@ -11,13 +11,13 @@
 //   - no parsing logic
 //   - no response generation
 
-const epoll = @import("../net/epoll.zig");
+const epoll = @import("../net/sys/epoll.zig");
 const Epoll = epoll.Epoll;
 const Event = epoll.Event;
 const EPOLL = epoll.EPOLL;
 
 const Listener = @import("../net/listener.zig").Listener;
-const socket = @import("../net/socket.zig");
+const sys_fd = @import("../net/sys/fd.zig");
 
 const Connection = @import("connection.zig").Connection;
 const parser = @import("../http/parser.zig");
@@ -87,11 +87,11 @@ pub const Loop = struct {
             if (self.findSlot()) |slot| {
                 slot.* = Connection.init(fd.?);
                 self.epoll.add(fd.?, EVENTS) catch {
-                    socket.close(fd.?);
+                    sys_fd.close(fd.?);
                     slot.* = null;
                 };
             } else {
-                socket.close(fd.?);
+                sys_fd.close(fd.?);
             }
         }
     }
