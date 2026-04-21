@@ -4,13 +4,18 @@
 // guarantees:
 //   - manages connection lifecycle
 //   - dispatches parsed requests to gates and handler
+//   - defines event policy (IN | HUP | ERR)
+//   - defines timeout policy (blocking)
 //
 // non-goals:
 //   - no parsing logic
 //   - no response generation
 
-const Epoll = @import("../net/epoll.zig").Epoll;
-const Event = @import("../net/epoll.zig").Event;
+const epoll = @import("../net/epoll.zig");
+const Epoll = epoll.Epoll;
+const Event = epoll.Event;
+const EPOLL = epoll.EPOLL;
+
 const Listener = @import("../net/listener.zig").Listener;
 const socket = @import("../net/socket.zig");
 
@@ -35,12 +40,14 @@ pub const Loop = struct {
     gates: []const Gate,
     connections: [MAX_CONNECTIONS]?Connection,
 
+    const EVENTS = EPOLL.IN | EPOLL.HUP | EPOLL.ERR;
+
     pub fn init(listener: *Listener, gates: []const Gate, h: Handler) !Loop {
-        var epoll = try Epoll.init();
-        try epoll.add(listener.fd);
+        var ep = try Epoll.init();
+        try ep.add(listener.fd, EVENTS);
 
         return .{
-            .epoll = epoll,
+            .epoll = ep,
             .listener = listener,
             .handler = h,
             .gates = gates,
@@ -56,7 +63,7 @@ pub const Loop = struct {
         var events: [MAX_EVENTS]Event = undefined;
 
         while (true) {
-            const n = self.epoll.wait(&events);
+            const n = self.waitEvents(&events);
 
             for (events[0..n]) |ev| {
                 if (ev.data.fd == self.listener.fd) {
@@ -68,6 +75,10 @@ pub const Loop = struct {
         }
     }
 
+    fn waitEvents(self: *Loop, events: []Event) usize {
+        return self.epoll.wait(events, -1);
+    }
+
     fn accept(self: *Loop) void {
         while (true) {
             const fd = self.listener.accept() catch return;
@@ -75,7 +86,7 @@ pub const Loop = struct {
 
             if (self.findSlot()) |slot| {
                 slot.* = Connection.init(fd.?);
-                self.epoll.add(fd.?) catch {
+                self.epoll.add(fd.?, EVENTS) catch {
                     socket.close(fd.?);
                     slot.* = null;
                 };
@@ -155,7 +166,7 @@ pub const Loop = struct {
 
     fn closeConnection(self: *Loop, conn: *Connection) void {
         const fd = conn.fd;
-        self.epoll.del(fd);
+        self.epoll.del(fd) catch {};
         conn.close();
 
         for (&self.connections) |*slot| {
