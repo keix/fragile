@@ -108,15 +108,7 @@ The following are out of scope:
 Scope defines the protocol, not the architecture.
 
 ## Architecture
-Fragile is structured as a strict separation of concerns.  
-Each layer has a single responsibility and does not depend on higher layers.
-
-- `main` initializes the process and defines the entry point.
-- `server/loop` drives the system using epoll. It does not interpret data.
-- `server/connection` represents a connection as a state machine.
-- `http/parser` transforms bytes into structured data. It is pure and has no IO.
-- `http/request` defines the shape of a request. It contains no behavior.
-- `http/response` defines the response and handles serialization.
+Architecture defines how bytes flow, how state evolves, and how the system executes.
 
 ### Data flows
 ```mermaid
@@ -153,52 +145,47 @@ This architecture makes boundaries explicit.
 
 ### Structure
 ```
-  src/
-    main.zig             -- wires all layers
-    net/
-      sys/
-        epoll.zig        -- syscall remap (1:1)
-        fd.zig           -- syscall remap (read/write/close)
-        socket.zig       -- syscall remap (socket/bind/listen/accept)
-      listener.zig       -- composes syscalls into listening socket
-    server/
-      connection.zig     -- holds connection state and buffers
-      loop.zig           -- drives epoll loop, defines policy
-    http/
-      parser.zig         -- protocol dispatch facade
-      request.zig        -- defines HTTP request structures
-      response.zig       -- defines Response and serializes to bytes
-      status.zig         -- protocol data (200, 400, 404...)
-      handler.zig        -- defines Handler boundary
-      gate.zig           -- pass or reject decisions
-      http1/
-        parser.zig       -- HTTP/1.1 parsing logic
-    payload/
-      payload.zig        -- payload type definition
-      json.zig           -- JSON parsing (stub)
-      form.zig           -- form-urlencoded parsing (stub)
-      multipart.zig      -- multipart/form-data parsing (stub)
+src/
+  main.zig               -- wires all layers
+  net/
+    sys/
+      epoll.zig          -- syscall remap (epoll)
+      fd.zig             -- syscall remap (read/write/close/writev)
+      socket.zig         -- syscall remap (socket/bind/listen/accept)
+      process.zig        -- syscall remap (fork/waitpid/sigaction)
+    listener.zig         -- composes syscalls into listening socket
+  server/
+    worker.zig           -- forks workers, monitors children
+    loop.zig             -- drives epoll loop, defines policy
+    connection.zig       -- holds connection state and buffers
+  http/
+    parser.zig           -- protocol dispatch facade
+    request.zig          -- defines HTTP request structures
+    response.zig         -- defines Response and serializes to bytes
+    status.zig           -- protocol data (200, 400, 404...)
+    handler.zig          -- defines Handler boundary
+    gate.zig             -- pass or reject decisions
+    http1/
+      parser.zig         -- HTTP/1.1 parsing logic
+  payload/
+    payload.zig          -- payload type definition (stub)
+    json.zig             -- JSON parsing (stub)
+    form.zig             -- form-urlencoded parsing (stub)
+    multipart.zig        -- multipart/form-data parsing (stub)
 ```
 
-### Dependency
-```
-main
- └─ server/loop (policy)
-     ├─ net/sys/epoll
-     ├─ net/sys/fd
-     ├─ net/listener (composition)
-     │   ├─ net/sys/socket
-     │   └─ net/sys/fd
-     ├─ server/connection
-     │   └─ net/sys/fd
-     ├─ http/parser
-     │   └─ http/http1/parser
-     │       └─ http/request
-     └─ http/gate
-         └─ http/request
-```
+### Execution Model
+Fragile uses a multi-process architecture.
 
-The structure is not an implementation detail. It is the system.
+The parent process initializes the listening socket and spawns worker processes.  
+Each worker runs an independent event loop and accepts connections directly.
+
+Workers do not share state.  
+No synchronization or locking is used.
+
+Load is distributed by the kernel using `SO_REUSEPORT`.  
+Each worker is a complete and isolated server instance.
+
 
 ## Design
 No allocation in the HTTP core. Non-blocking I/O. Explicit state.

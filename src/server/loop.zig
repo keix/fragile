@@ -30,8 +30,8 @@ const Context = handler.Context;
 const Response = response.Response;
 const Gate = gate.Gate;
 
-const MAX_EVENTS = 128;
-const MAX_CONNECTIONS = 128;
+const MAX_EVENTS = 256;
+const MAX_CONNECTIONS = 256;
 
 pub const Loop = struct {
     epoll: Epoll,
