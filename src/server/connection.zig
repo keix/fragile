@@ -62,3 +62,31 @@ pub const Connection = struct {
         return self.read_buf[0..self.read_pos];
     }
 };
+
+// =============================================================================
+// Tests
+// =============================================================================
+
+const testing = @import("std").testing;
+
+test "init: default state is reading" {
+    const conn = Connection.init(42);
+    try testing.expectEqual(State.reading, conn.state);
+    try testing.expectEqual(@as(i32, 42), conn.fd);
+    try testing.expectEqual(@as(usize, 0), conn.read_pos);
+    try testing.expectEqual(@as(usize, 0), conn.write_len);
+    try testing.expectEqual(@as(usize, 0), conn.write_pos);
+}
+
+test "buffer: returns read data" {
+    var conn = Connection.init(0);
+    conn.read_buf[0] = 'H';
+    conn.read_buf[1] = 'I';
+    conn.read_pos = 2;
+    try testing.expectEqualStrings("HI", conn.buffer());
+}
+
+test "buffer: empty when no data" {
+    var conn = Connection.init(0);
+    try testing.expectEqualStrings("", conn.buffer());
+}

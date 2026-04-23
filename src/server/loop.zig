@@ -31,7 +31,7 @@ const Response = response.Response;
 const Gate = gate.Gate;
 
 const MAX_EVENTS = 128;
-const MAX_CONNECTIONS = 64;
+const MAX_CONNECTIONS = 128;
 
 pub const Loop = struct {
     epoll: Epoll,

@@ -96,3 +96,70 @@ fn writeInt(buf: []u8, value: usize) usize {
 
     return len;
 }
+
+// =============================================================================
+// Tests
+// =============================================================================
+
+const testing = @import("std").testing;
+
+test "serialize: 200 OK with body" {
+    var buf: [256]u8 = undefined;
+    const res = Response{ .status = .ok, .body = "Hello" };
+    const len = serialize(res, &buf);
+
+    try testing.expectEqualStrings(
+        "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nHello",
+        buf[0..len],
+    );
+}
+
+test "serialize: 400 Bad Request" {
+    var buf: [256]u8 = undefined;
+    const len = serialize(bad_request, &buf);
+
+    try testing.expectEqualStrings(
+        "HTTP/1.1 400 Bad Request\r\nContent-Length: 11\r\nConnection: close\r\n\r\nBad Request",
+        buf[0..len],
+    );
+}
+
+test "serialize: 404 Not Found" {
+    var buf: [256]u8 = undefined;
+    const res = Response{ .status = .not_found, .body = "Not Found" };
+    const len = serialize(res, &buf);
+
+    try testing.expectEqualStrings(
+        "HTTP/1.1 404 Not Found\r\nContent-Length: 9\r\nConnection: close\r\n\r\nNot Found",
+        buf[0..len],
+    );
+}
+
+test "serialize: empty body" {
+    var buf: [256]u8 = undefined;
+    const res = Response{ .status = .ok, .body = "" };
+    const len = serialize(res, &buf);
+
+    try testing.expectEqualStrings(
+        "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        buf[0..len],
+    );
+}
+
+test "writeInt: zero" {
+    var buf: [20]u8 = undefined;
+    const len = writeInt(&buf, 0);
+    try testing.expectEqualStrings("0", buf[0..len]);
+}
+
+test "writeInt: single digit" {
+    var buf: [20]u8 = undefined;
+    const len = writeInt(&buf, 5);
+    try testing.expectEqualStrings("5", buf[0..len]);
+}
+
+test "writeInt: multiple digits" {
+    var buf: [20]u8 = undefined;
+    const len = writeInt(&buf, 12345);
+    try testing.expectEqualStrings("12345", buf[0..len]);
+}

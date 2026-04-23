@@ -9,9 +9,17 @@
 //   - no parsing
 //   - no validation
 
+/// Methods are defined by RFC 9110 (Table 4).
+/// Fragile treats them as opaque tokens.
 pub const Method = enum {
     GET,
+    HEAD,
     POST,
+    PUT,
+    DELETE,
+    CONNECT,
+    OPTIONS,
+    TRACE,
 };
 
 pub const Protocol = enum {
