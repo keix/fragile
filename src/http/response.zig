@@ -9,6 +9,9 @@
 // non-goals:
 //   - no I/O
 
+const std = @import("std");
+const posix = std.posix;
+
 pub const Status = @import("status.zig").Status;
 
 pub const Response = struct {
@@ -21,50 +24,68 @@ pub const bad_request: Response = .{
     .body = "Bad Request",
 };
 
+// Static templates for writev (compile-time)
+pub const Template = struct {
+    prefix: []const u8,
+    suffix: []const u8,
+};
+
+pub const templates = struct {
+    pub const @"200" = Template{
+        .prefix = "HTTP/1.1 200 OK\r\nContent-Length: ",
+        .suffix = "\r\nConnection: close\r\n\r\n",
+    };
+    pub const @"400" = Template{
+        .prefix = "HTTP/1.1 400 Bad Request\r\nContent-Length: ",
+        .suffix = "\r\nConnection: close\r\n\r\n",
+    };
+    pub const @"404" = Template{
+        .prefix = "HTTP/1.1 404 Not Found\r\nContent-Length: ",
+        .suffix = "\r\nConnection: close\r\n\r\n",
+    };
+
+    pub fn get(status: Status) Template {
+        return switch (status) {
+            .ok => @"200",
+            .bad_request => @"400",
+            .not_found => @"404",
+        };
+    }
+};
+
+/// Prepare iovecs for writev. Returns number of iovecs used.
+pub fn prepareIovecs(
+    res: Response,
+    iovecs: *[4]posix.iovec_const,
+    len_buf: *[20]u8,
+) usize {
+    const tmpl = templates.get(res.status);
+    const len_size = writeInt(len_buf, res.body.len);
+
+    iovecs[0] = .{ .base = tmpl.prefix.ptr, .len = tmpl.prefix.len };
+    iovecs[1] = .{ .base = len_buf, .len = len_size };
+    iovecs[2] = .{ .base = tmpl.suffix.ptr, .len = tmpl.suffix.len };
+    iovecs[3] = .{ .base = res.body.ptr, .len = res.body.len };
+
+    return 4;
+}
+
 /// Serialize Response into bytes. Pure function.
+/// Uses precomputed templates for efficiency.
 pub fn serialize(res: Response, out: []u8) usize {
+    const tmpl = templates.get(res.status);
     var pos: usize = 0;
 
-    // Status line
-    const status_line = "HTTP/1.1 ";
-    @memcpy(out[pos..][0..status_line.len], status_line);
-    pos += status_line.len;
+    // Prefix: "HTTP/1.1 XXX Phrase\r\nContent-Length: "
+    @memcpy(out[pos..][0..tmpl.prefix.len], tmpl.prefix);
+    pos += tmpl.prefix.len;
 
-    // Status code
-    const code = @intFromEnum(res.status);
-    out[pos] = '0' + @as(u8, @intCast(code / 100));
-    out[pos + 1] = '0' + @as(u8, @intCast((code / 10) % 10));
-    out[pos + 2] = '0' + @as(u8, @intCast(code % 10));
-    pos += 3;
-
-    out[pos] = ' ';
-    pos += 1;
-
-    const phrase = res.status.phrase();
-    @memcpy(out[pos..][0..phrase.len], phrase);
-    pos += phrase.len;
-
-    @memcpy(out[pos..][0..2], "\r\n");
-    pos += 2;
-
-    // Content-Length
-    const cl = "Content-Length: ";
-    @memcpy(out[pos..][0..cl.len], cl);
-    pos += cl.len;
-
+    // Content-Length value
     pos += writeInt(out[pos..], res.body.len);
 
-    @memcpy(out[pos..][0..2], "\r\n");
-    pos += 2;
-
-    // Connection close
-    const conn_hdr = "Connection: close\r\n";
-    @memcpy(out[pos..][0..conn_hdr.len], conn_hdr);
-    pos += conn_hdr.len;
-
-    // End headers
-    @memcpy(out[pos..][0..2], "\r\n");
-    pos += 2;
+    // Suffix: "\r\nConnection: close\r\n\r\n"
+    @memcpy(out[pos..][0..tmpl.suffix.len], tmpl.suffix);
+    pos += tmpl.suffix.len;
 
     // Body
     @memcpy(out[pos..][0..res.body.len], res.body);

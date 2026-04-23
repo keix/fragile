@@ -29,6 +29,13 @@ pub const Listener = struct {
             &std.mem.toBytes(@as(c_int, 1)),
         );
 
+        try sys.setsockopt(
+            sock,
+            sys.SOL.SOCKET,
+            sys.SO.REUSEPORT,
+            &std.mem.toBytes(@as(c_int, 1)),
+        );
+
         const addr = sys.sockaddr.in{
             .family = sys.AF.INET,
             .port = std.mem.nativeToBig(u16, port),
