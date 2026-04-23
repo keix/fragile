@@ -28,3 +28,9 @@ fn handleRequest(_: *handler.Context, _: handler.Request) !Response {
         .body = "Hello, World!!",
     };
 }
+
+test {
+    _ = @import("http/http1/parser.zig");
+    _ = @import("http/response.zig");
+    _ = @import("server/connection.zig");
+}

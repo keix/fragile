@@ -23,11 +23,39 @@ At the lowest layer, everything looks fragile. That is why nothing breaks.
 - Zig 0.15.2
 - Linux (epoll; Tested with Gentoo 6.12.21)
 
+Fragile runs with Zig alone. No additional tools are required.  
+Alternatively, a reproducible development environment is provided via Nix:
+```
+nix develop
+```
+
+This environment provides Zig in a fixed version and includes optional tools such as netcat, wrk, and jq for testing and debugging.
+
 ## Running
 ```
 zig build run
 curl http://localhost:8080
 ```
+
+## Testing
+
+### Smoke Test
+Run a quick end-to-end test:
+
+```
+sh smoke.sh
+```
+
+This verifies that the server accepts valid requests and rejects invalid ones.
+
+### Unit Tests
+Run the parser test suite:
+
+```
+zig build test --summary all
+```
+
+These tests define the accepted syntax and rejection rules.
 
 ## Specification
 HTTP is a contract over bytes.  
