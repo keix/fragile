@@ -22,3 +22,7 @@ pub fn read(fd: posix.fd_t, buf: []u8) !usize {
 pub fn write(fd: posix.fd_t, buf: []const u8) !usize {
     return posix.write(fd, buf);
 }
+
+pub fn writev(fd: posix.fd_t, iovecs: []const posix.iovec_const) !usize {
+    return posix.writev(fd, iovecs);
+}

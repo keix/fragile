@@ -8,18 +8,18 @@
 //   - no logic beyond wiring
 
 const Listener = @import("net/listener.zig").Listener;
-const Loop = @import("server/loop.zig").Loop;
+const Worker = @import("server/worker.zig").Worker;
 const handler = @import("http/handler.zig");
 const Response = @import("http/response.zig").Response;
+
+const NUM_WORKERS = 4;
 
 pub fn main() !void {
     var listener = try Listener.init(8080);
     defer listener.deinit();
 
-    var loop = try Loop.init(&listener, &.{}, handleRequest);
-    defer loop.deinit();
-
-    loop.run();
+    var worker = Worker.init(&listener, &.{}, handleRequest, NUM_WORKERS);
+    try worker.run();
 }
 
 fn handleRequest(_: *handler.Context, _: handler.Request) !Response {
