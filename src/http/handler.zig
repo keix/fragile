@@ -22,3 +22,17 @@ pub const Context = struct {
 /// Handler boundary. Pure function.
 /// All extensions (proxy, app, thread pool) go through here.
 pub const Handler = *const fn (*Context, Request) anyerror!Response;
+
+const get = @import("service/get.zig");
+
+/// Dispatch requests to services.
+/// Routing only. No logic.
+pub fn dispatch(_: *Context, req: Request) anyerror!Response {
+    if (req.method == .GET) {
+        return get.handle(req);
+    }
+    return .{
+        .status = .bad_request,
+        .body = "",
+    };
+}

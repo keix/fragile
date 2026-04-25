@@ -10,7 +10,6 @@
 const Listener = @import("net/listener.zig").Listener;
 const Worker = @import("server/worker.zig").Worker;
 const handler = @import("http/handler.zig");
-const Response = @import("http/response.zig").Response;
 
 const NUM_WORKERS = 4;
 
@@ -18,15 +17,8 @@ pub fn main() !void {
     var listener = try Listener.init(8080);
     defer listener.deinit();
 
-    var worker = Worker.init(&listener, &.{}, handleRequest, NUM_WORKERS);
+    var worker = Worker.init(&listener, &.{}, handler.dispatch, NUM_WORKERS);
     try worker.run();
-}
-
-fn handleRequest(_: *handler.Context, _: handler.Request) !Response {
-    return .{
-        .status = .ok,
-        .body = "Hello, World!!",
-    };
 }
 
 test {
