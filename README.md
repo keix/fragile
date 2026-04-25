@@ -187,7 +187,6 @@ No synchronization or locking is used.
 Load is distributed by the kernel using `SO_REUSEPORT`.  
 Each worker is a complete and isolated server instance.
 
-
 ## Design
 No allocation in the HTTP core. Non-blocking I/O. Explicit state.
 
@@ -204,6 +203,8 @@ All extensions are implemented as handlers.
 
 Modules are independent. Modules do not share state.  
 Allocation, if any, is explicit and local. The core flow is fixed.
+
+The core defines structure. Handlers define behavior.
 
 Fragile does not implement HTTP. It defines it.
 

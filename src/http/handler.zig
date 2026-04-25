@@ -28,11 +28,21 @@ const get = @import("service/get.zig");
 /// Dispatch requests to services.
 /// Routing only. No logic.
 pub fn dispatch(_: *Context, req: Request) anyerror!Response {
-    if (req.method == .GET) {
-        return get.handle(req);
-    }
-    return .{
-        .status = .bad_request,
-        .body = "",
+    return switch (req.method) {
+        .GET => blk: {
+            var buf: [4096]u8 = undefined;
+            break :blk get.handle(req, &buf);
+        },
+        .HEAD => blk: {
+            var buf: [4096]u8 = undefined;
+            const res = get.handle(req, &buf);
+            break :blk .{ .status = res.status, .body = "" };
+        },
+        else => method_not_allowed,
     };
 }
+
+const method_not_allowed: Response = .{
+    .status = .method_not_allowed,
+    .body = "",
+};

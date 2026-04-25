@@ -27,12 +27,14 @@ const status_lines = struct {
     const @"200" = "HTTP/1.1 200 OK\r\nContent-Length: ";
     const @"400" = "HTTP/1.1 400 Bad Request\r\nContent-Length: ";
     const @"404" = "HTTP/1.1 404 Not Found\r\nContent-Length: ";
+    const @"405" = "HTTP/1.1 405 Method Not Allowed\r\nContent-Length: ";
 
     inline fn get(status: Status) []const u8 {
         return switch (status) {
             .ok => @"200",
             .bad_request => @"400",
             .not_found => @"404",
+            .method_not_allowed => @"405",
         };
     }
 };

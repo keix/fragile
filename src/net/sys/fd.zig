@@ -9,7 +9,12 @@
 //   - no buffering
 //   - no interpretation
 
-const posix = @import("std").posix;
+const std = @import("std");
+const posix = std.posix;
+
+pub fn open(path: []const u8) !posix.fd_t {
+    return posix.open(path, .{ .ACCMODE = .RDONLY }, 0);
+}
 
 pub fn close(fd: posix.fd_t) void {
     posix.close(fd);

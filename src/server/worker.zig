@@ -103,8 +103,6 @@ fn installSigchldHandler() !void {
 }
 
 fn handleSigchld(_: c_int) callconv(.c) void {
-    // Reap all terminated children (non-blocking)
-    while (true) {
-        _ = process.waitpid(-1, process.WNOHANG) catch break;
-    }
+    // Do nothing here. waitChildren handles reaping.
+    // This handler exists only to interrupt blocking waitpid with EINTR.
 }
