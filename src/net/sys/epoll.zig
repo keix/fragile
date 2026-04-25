@@ -45,6 +45,14 @@ pub const Epoll = struct {
         try posix.epoll_ctl(self.fd, linux.EPOLL.CTL_DEL, fd, null);
     }
 
+    pub fn mod(self: *Epoll, fd: posix.fd_t, events: u32) !void {
+        var ev = Event{
+            .events = events,
+            .data = .{ .fd = fd },
+        };
+        try posix.epoll_ctl(self.fd, linux.EPOLL.CTL_MOD, fd, &ev);
+    }
+
     pub fn wait(self: *Epoll, events: []Event, timeout: i32) usize {
         return posix.epoll_wait(self.fd, events, timeout);
     }

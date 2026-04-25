@@ -14,6 +14,7 @@ const sys_fd = @import("../net/sys/fd.zig");
 pub const State = enum {
     reading,
     writing,
+    sending_file,
 };
 
 pub const Connection = struct {
@@ -26,6 +27,11 @@ pub const Connection = struct {
     write_pos: usize,
     keep_alive: bool,
     requests_served: usize,
+    file_fd: i32,
+    file_size: usize,
+    file_sent: usize,
+    file_owned: bool,
+    write_armed: bool,
 
     pub fn init(fd: i32) Connection {
         return .{
@@ -38,14 +44,24 @@ pub const Connection = struct {
             .write_pos = 0,
             .keep_alive = true,
             .requests_served = 0,
+            .file_fd = -1,
+            .file_size = 0,
+            .file_sent = 0,
+            .file_owned = false,
+            .write_armed = false,
         };
     }
 
     /// Reset for next request (keep-alive)
     pub fn reset(self: *Connection) void {
+        self.closeFile();
         self.read_pos = 0;
         self.write_len = 0;
         self.write_pos = 0;
+        self.file_size = 0;
+        self.file_sent = 0;
+        self.file_owned = false;
+        self.write_armed = false;
         self.state = .reading;
     }
 
@@ -61,12 +77,29 @@ pub const Connection = struct {
 
     pub fn write(self: *Connection) !bool {
         const remaining = self.write_buf[self.write_pos..self.write_len];
+        if (remaining.len == 0) return true;
         const n = try sys_fd.write(self.fd, remaining);
         self.write_pos += n;
         return self.write_pos >= self.write_len;
     }
 
+    pub fn sendFile(self: *Connection) !bool {
+        const remaining = self.file_size - self.file_sent;
+        if (remaining == 0) return true;
+
+        _ = try sys_fd.sendfile(self.fd, self.file_fd, &self.file_sent, remaining);
+        return self.file_sent >= self.file_size;
+    }
+
+    pub fn closeFile(self: *Connection) void {
+        if (self.file_fd >= 0 and self.file_owned) {
+            sys_fd.close(self.file_fd);
+        }
+        self.file_fd = -1;
+    }
+
     pub fn close(self: *Connection) void {
+        self.closeFile();
         sys_fd.close(self.fd);
     }
 
@@ -76,9 +109,26 @@ pub const Connection = struct {
 
     /// Prepare response for writing (serialize into write buffer)
     pub fn prepareResponse(self: *Connection, res: response.Response, conn_close: bool) void {
-        self.write_len = response.serialize(res, &self.write_buf, conn_close);
-        self.write_pos = 0;
-        self.state = .writing;
+        switch (res.body) {
+            .slice => {
+                self.write_len = response.serialize(res, &self.write_buf, conn_close);
+                self.write_pos = 0;
+                self.state = .writing;
+            },
+            .file => |f| {
+                self.write_len = response.serializeHeader(res.status, res.content_length, &self.write_buf, conn_close);
+                self.write_pos = 0;
+                self.file_fd = f.fd;
+                self.file_size = f.size;
+                self.file_sent = 0;
+                self.file_owned = f.owned;
+                self.state = .writing;
+            },
+        }
+    }
+
+    pub fn hasFileBody(self: *Connection) bool {
+        return self.file_fd >= 0;
     }
 };
 

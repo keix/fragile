@@ -41,19 +41,22 @@ pub const Loop = struct {
     listener: *Listener,
     handler: Handler,
     gates: []const Gate,
+    ctx: Context,
     connections: [MAX_CONNECTIONS]?Connection,
 
-    const EVENTS = EPOLL.IN | EPOLL.HUP | EPOLL.ERR;
+    const READ_EVENTS = EPOLL.IN | EPOLL.HUP | EPOLL.ERR;
+    const WRITE_EVENTS = EPOLL.OUT | EPOLL.HUP | EPOLL.ERR;
 
-    pub fn init(listener: *Listener, gates: []const Gate, h: Handler) !Loop {
+    pub fn init(listener: *Listener, gates: []const Gate, h: Handler, ctx: Context) !Loop {
         var ep = try Epoll.init();
-        try ep.add(listener.fd, EVENTS);
+        try ep.add(listener.fd, READ_EVENTS);
 
         return .{
             .epoll = ep,
             .listener = listener,
             .handler = h,
             .gates = gates,
+            .ctx = ctx,
             .connections = [_]?Connection{null} ** MAX_CONNECTIONS,
         };
     }
@@ -89,7 +92,7 @@ pub const Loop = struct {
 
             if (self.findSlot()) |slot| {
                 slot.* = Connection.init(fd.?);
-                self.epoll.add(fd.?, EVENTS) catch {
+                self.epoll.add(fd.?, READ_EVENTS) catch {
                     sys_fd.close(fd.?);
                     slot.* = null;
                 };
@@ -105,6 +108,7 @@ pub const Loop = struct {
         switch (conn.state) {
             .reading => self.handleRead(conn),
             .writing => self.handleWrite(conn),
+            .sending_file => self.handleSendFile(conn),
         }
     }
 
@@ -141,10 +145,7 @@ pub const Loop = struct {
             true;
         conn.requests_served += 1;
 
-        var ctx = Context{};
-        _ = &ctx;
-
-        const res = self.handler(&ctx, req) catch {
+        const res = self.handler(&self.ctx, req) catch {
             self.closeConnection(conn);
             return;
         };
@@ -153,18 +154,66 @@ pub const Loop = struct {
     }
 
     fn handleWrite(self: *Loop, conn: *Connection) void {
-        const done = conn.write() catch {
-            self.closeConnection(conn);
-            return;
-        };
+        while (true) {
+            const before = conn.write_pos;
+            const done = conn.write() catch |err| switch (err) {
+                error.WouldBlock => {
+                    self.armWrite(conn);
+                    return;
+                },
+                else => {
+                    self.closeConnection(conn);
+                    return;
+                },
+            };
 
-        if (done) {
-            if (conn.keep_alive and conn.requests_served < MAX_REQUESTS_PER_CONN) {
-                // Keep-alive: reset for next request
-                conn.reset();
-            } else {
+            if (!done and conn.write_pos == before) {
                 self.closeConnection(conn);
+                return;
             }
+
+            if (!done) continue;
+
+            if (conn.hasFileBody()) {
+                conn.state = .sending_file;
+                self.handleSendFile(conn);
+            } else {
+                self.finishResponse(conn);
+            }
+            return;
+        }
+    }
+
+    fn handleSendFile(self: *Loop, conn: *Connection) void {
+        while (true) {
+            const done = conn.sendFile() catch |err| switch (err) {
+                error.WouldBlock => {
+                    self.armWrite(conn);
+                    return;
+                },
+                else => {
+                    self.closeConnection(conn);
+                    return;
+                },
+            };
+
+            if (done) {
+                conn.closeFile();
+                self.finishResponse(conn);
+                return;
+            }
+        }
+    }
+
+    fn finishResponse(self: *Loop, conn: *Connection) void {
+        if (conn.keep_alive and conn.requests_served < MAX_REQUESTS_PER_CONN) {
+            self.armRead(conn) catch {
+                self.closeConnection(conn);
+                return;
+            };
+            conn.reset();
+        } else {
+            self.closeConnection(conn);
         }
     }
 
@@ -172,6 +221,21 @@ pub const Loop = struct {
         const close = !conn.keep_alive or conn.requests_served >= MAX_REQUESTS_PER_CONN;
         conn.prepareResponse(res, close);
         self.handleWrite(conn);
+    }
+
+    fn armWrite(self: *Loop, conn: *Connection) void {
+        if (conn.write_armed) return;
+        self.epoll.mod(conn.fd, WRITE_EVENTS) catch {
+            self.closeConnection(conn);
+            return;
+        };
+        conn.write_armed = true;
+    }
+
+    fn armRead(self: *Loop, conn: *Connection) !void {
+        if (!conn.write_armed) return;
+        try self.epoll.mod(conn.fd, READ_EVENTS);
+        conn.write_armed = false;
     }
 
     fn sendError(self: *Loop, conn: *Connection) void {

@@ -16,7 +16,6 @@ const Listener = @import("../net/listener.zig").Listener;
 const Loop = @import("loop.zig").Loop;
 const handler = @import("../http/handler.zig");
 const gate = @import("../http/gate.zig");
-
 pub const Worker = struct {
     listener: *Listener,
     handler: handler.Handler,
@@ -66,7 +65,7 @@ pub const Worker = struct {
     }
 
     fn runWorker(self: *Worker) noreturn {
-        var loop = Loop.init(self.listener, self.gates, self.handler) catch {
+        var loop = Loop.init(self.listener, self.gates, self.handler, .{}) catch {
             std.process.exit(1);
         };
         defer loop.deinit();
@@ -103,8 +102,6 @@ fn installSigchldHandler() !void {
 }
 
 fn handleSigchld(_: c_int) callconv(.c) void {
-    // Reap all terminated children (non-blocking)
-    while (true) {
-        _ = process.waitpid(-1, process.WNOHANG) catch break;
-    }
+    // Do nothing here. waitChildren handles reaping.
+    // This handler exists only to interrupt blocking waitpid with EINTR.
 }
