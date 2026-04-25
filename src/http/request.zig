@@ -38,4 +38,5 @@ pub const Request = struct {
     host: []const u8,
     content_length: ?usize,
     body: []const u8,
+    headers: []const u8,
 };

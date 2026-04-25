@@ -103,6 +103,7 @@ pub fn parse(buf: []const u8) Error!Request {
         .host = host,
         .content_length = content_length,
         .body = body,
+        .headers = headers_buf,
     };
 }
 
@@ -152,7 +153,7 @@ fn parseProtocol(line: []const u8) ?Protocol {
     return null;
 }
 
-fn findHeader(headers: []const u8, name: []const u8) ?[]const u8 {
+pub fn findHeader(headers: []const u8, name: []const u8) ?[]const u8 {
     var iter = std.mem.splitSequence(u8, headers, "\r\n");
 
     while (iter.next()) |line| {
