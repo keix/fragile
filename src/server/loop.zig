@@ -11,6 +11,8 @@
 //   - no parsing logic
 //   - no response generation
 
+const std = @import("std");
+
 const epoll = @import("../net/sys/epoll.zig");
 const Epoll = epoll.Epoll;
 const Event = epoll.Event;
@@ -30,8 +32,9 @@ const Context = handler.Context;
 const Response = response.Response;
 const Gate = gate.Gate;
 
-const MAX_EVENTS = 256;
-const MAX_CONNECTIONS = 256;
+const MAX_EVENTS = 2048;
+const MAX_CONNECTIONS = 2048;
+const MAX_REQUESTS_PER_CONN = 800;
 
 pub const Loop = struct {
     epoll: Epoll,
@@ -130,6 +133,14 @@ pub const Loop = struct {
             return;
         };
 
+        // Update keep-alive state (HTTP/1.1 defaults to keep-alive)
+        // Note: minimal parsing - "close, upgrade" won't be detected
+        conn.keep_alive = if (parser.findHeader(req.headers, "Connection")) |val|
+            !std.ascii.eqlIgnoreCase(val, "close")
+        else
+            true;
+        conn.requests_served += 1;
+
         var ctx = Context{};
         _ = &ctx;
 
@@ -148,19 +159,23 @@ pub const Loop = struct {
         };
 
         if (done) {
-            self.closeConnection(conn);
+            if (conn.keep_alive and conn.requests_served < MAX_REQUESTS_PER_CONN) {
+                // Keep-alive: reset for next request
+                conn.reset();
+            } else {
+                self.closeConnection(conn);
+            }
         }
     }
 
     fn sendResponse(self: *Loop, conn: *Connection, res: Response) void {
-        const len = response.serialize(res, &conn.write_buf);
-        conn.write_len = len;
-        conn.write_pos = 0;
-        conn.state = .writing;
+        const close = !conn.keep_alive or conn.requests_served >= MAX_REQUESTS_PER_CONN;
+        conn.prepareResponse(res, close);
         self.handleWrite(conn);
     }
 
     fn sendError(self: *Loop, conn: *Connection) void {
+        conn.keep_alive = false; // Always close on error
         self.sendResponse(conn, response.bad_request);
     }
 

@@ -81,7 +81,7 @@ This implementation defines message syntax (RFC 9112).
 Semantics (RFC 9110) and caching (RFC 9111) are intentionally out of scope.
 
 ## Scope
-Fragile defines a strict HTTP/1.1 message parser and responder.
+Fragile defines a strict HTTP/1.1 (RFC 9112) message layer.
 
 It accepts well-formed and unambiguous input.  
 Invalid or incomplete input is rejected.
@@ -96,6 +96,7 @@ The following are in scope:
 - Content-Length handling
 - Message completeness validation
 - Response serialization
+- Connection lifecycle management (keep-alive)
 
 The following are out of scope:
 
@@ -103,9 +104,8 @@ The following are out of scope:
 - Caching (RFC 9111)
 - Content interpretation (e.g. JSON, form, multipart)
 - Transfer encodings (e.g. chunked)
-- Connection reuse (keep-alive)
 
-Scope defines the protocol, not the architecture.
+Scope defines the protocol boundary, not the architecture.
 
 ## Architecture
 Architecture defines how bytes flow, how state evolves, and how the system executes.
@@ -131,10 +131,11 @@ flowchart LR
     FD -->|init| C[Connection]
 
     C -->|EPOLLIN| R[reading]
-    R -->|parse success| W[writing]
+    R --> W[writing]
     R -->|invalid| X[closing]
 
-    W -->|write complete| X
+    W -->|keep-alive| R
+    W -->|close| X
 ```
 
 No layer guesses intent.  

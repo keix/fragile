@@ -19,11 +19,13 @@ pub const State = enum {
 pub const Connection = struct {
     fd: i32,
     state: State,
-    read_buf: [2048]u8,
+    read_buf: [4096]u8,
     read_pos: usize,
     write_buf: [1024]u8,
     write_len: usize,
     write_pos: usize,
+    keep_alive: bool,
+    requests_served: usize,
 
     pub fn init(fd: i32) Connection {
         return .{
@@ -34,7 +36,17 @@ pub const Connection = struct {
             .write_buf = undefined,
             .write_len = 0,
             .write_pos = 0,
+            .keep_alive = true,
+            .requests_served = 0,
         };
+    }
+
+    /// Reset for next request (keep-alive)
+    pub fn reset(self: *Connection) void {
+        self.read_pos = 0;
+        self.write_len = 0;
+        self.write_pos = 0;
+        self.state = .reading;
     }
 
     pub fn read(self: *Connection) !usize {
@@ -61,7 +73,16 @@ pub const Connection = struct {
     pub fn buffer(self: *Connection) []const u8 {
         return self.read_buf[0..self.read_pos];
     }
+
+    /// Prepare response for writing (serialize into write buffer)
+    pub fn prepareResponse(self: *Connection, res: response.Response, conn_close: bool) void {
+        self.write_len = response.serialize(res, &self.write_buf, conn_close);
+        self.write_pos = 0;
+        self.state = .writing;
+    }
 };
+
+const response = @import("../http/response.zig");
 
 // =============================================================================
 // Tests
