@@ -16,7 +16,6 @@ const Listener = @import("../net/listener.zig").Listener;
 const Loop = @import("loop.zig").Loop;
 const handler = @import("../http/handler.zig");
 const gate = @import("../http/gate.zig");
-
 pub const Worker = struct {
     listener: *Listener,
     handler: handler.Handler,
@@ -66,7 +65,7 @@ pub const Worker = struct {
     }
 
     fn runWorker(self: *Worker) noreturn {
-        var loop = Loop.init(self.listener, self.gates, self.handler) catch {
+        var loop = Loop.init(self.listener, self.gates, self.handler, .{}) catch {
             std.process.exit(1);
         };
         defer loop.deinit();

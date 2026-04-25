@@ -11,14 +11,25 @@
 
 pub const Status = @import("status.zig").Status;
 
+pub const Body = union(enum) {
+    slice: []const u8,
+    file: struct {
+        fd: i32,
+        size: usize,
+        owned: bool,
+    },
+};
+
 pub const Response = struct {
     status: Status,
-    body: []const u8,
+    body: Body,
+    content_length: usize,
 };
 
 pub const bad_request: Response = .{
     .status = .bad_request,
-    .body = "Bad Request",
+    .body = .{ .slice = "Bad Request" },
+    .content_length = "Bad Request".len,
 };
 
 // Status line templates (compile-time)
@@ -60,6 +71,7 @@ pub inline fn writeIntPublic(buf: *[20]u8, value: usize) usize {
 
 /// Serialize Response into bytes. Pure function.
 /// close: if true, includes "Connection: close" header
+/// NOTE: Only for slice body. File body uses serializeHeader + sendfile.
 pub inline fn serialize(res: Response, out: []u8, close: bool) usize {
     // Hot path: keep-alive (99% of requests)
     // Cold path: close (only on error or max requests)
@@ -70,40 +82,67 @@ pub inline fn serialize(res: Response, out: []u8, close: bool) usize {
     }
 }
 
+/// Serialize header only (for file body, followed by sendfile).
+pub inline fn serializeHeader(status: Status, content_length: usize, out: []u8, close: bool) usize {
+    var pos: usize = 0;
+
+    const status_line = status_lines.get(status);
+    @memcpy(out[pos..][0..status_line.len], status_line);
+    pos += status_line.len;
+
+    pos += writeInt(out[pos..], content_length);
+
+    const suffix = if (close) suffix_close else suffix_keepalive;
+    @memcpy(out[pos..][0..suffix.len], suffix);
+    pos += suffix.len;
+
+    return pos;
+}
+
 /// Hot path: keep-alive (branch-free)
 inline fn serializeKeepAlive(res: Response, out: []u8) usize {
+    const body_slice = switch (res.body) {
+        .slice => |s| s,
+        .file => unreachable,
+    };
+
     var pos: usize = 0;
 
     const status_line = status_lines.get(res.status);
     @memcpy(out[pos..][0..status_line.len], status_line);
     pos += status_line.len;
 
-    pos += writeInt(out[pos..], res.body.len);
+    pos += writeInt(out[pos..], res.content_length);
 
     @memcpy(out[pos..][0..suffix_keepalive.len], suffix_keepalive);
     pos += suffix_keepalive.len;
 
-    @memcpy(out[pos..][0..res.body.len], res.body);
-    pos += res.body.len;
+    @memcpy(out[pos..][0..body_slice.len], body_slice);
+    pos += body_slice.len;
 
     return pos;
 }
 
 /// Cold path: close
 inline fn serializeClose(res: Response, out: []u8) usize {
+    const body_slice = switch (res.body) {
+        .slice => |s| s,
+        .file => unreachable,
+    };
+
     var pos: usize = 0;
 
     const status_line = status_lines.get(res.status);
     @memcpy(out[pos..][0..status_line.len], status_line);
     pos += status_line.len;
 
-    pos += writeInt(out[pos..], res.body.len);
+    pos += writeInt(out[pos..], res.content_length);
 
     @memcpy(out[pos..][0..suffix_close.len], suffix_close);
     pos += suffix_close.len;
 
-    @memcpy(out[pos..][0..res.body.len], res.body);
-    pos += res.body.len;
+    @memcpy(out[pos..][0..body_slice.len], body_slice);
+    pos += body_slice.len;
 
     return pos;
 }
@@ -164,7 +203,7 @@ const testing = @import("std").testing;
 
 test "serialize: 200 OK with close" {
     var buf: [256]u8 = undefined;
-    const res = Response{ .status = .ok, .body = "Hello" };
+    const res = Response{ .status = .ok, .body = .{ .slice = "Hello" }, .content_length = 5 };
     const len = serialize(res, &buf, true);
 
     try testing.expectEqualStrings(
@@ -175,7 +214,7 @@ test "serialize: 200 OK with close" {
 
 test "serialize: 200 OK keep-alive" {
     var buf: [256]u8 = undefined;
-    const res = Response{ .status = .ok, .body = "Hello" };
+    const res = Response{ .status = .ok, .body = .{ .slice = "Hello" }, .content_length = 5 };
     const len = serialize(res, &buf, false);
 
     try testing.expectEqualStrings(
@@ -196,7 +235,7 @@ test "serialize: 400 Bad Request" {
 
 test "serialize: 404 Not Found" {
     var buf: [256]u8 = undefined;
-    const res = Response{ .status = .not_found, .body = "Not Found" };
+    const res = Response{ .status = .not_found, .body = .{ .slice = "Not Found" }, .content_length = 9 };
     const len = serialize(res, &buf, true);
 
     try testing.expectEqualStrings(
@@ -207,11 +246,32 @@ test "serialize: 404 Not Found" {
 
 test "serialize: empty body" {
     var buf: [256]u8 = undefined;
-    const res = Response{ .status = .ok, .body = "" };
+    const res = Response{ .status = .ok, .body = .{ .slice = "" }, .content_length = 0 };
     const len = serialize(res, &buf, true);
 
     try testing.expectEqualStrings(
         "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        buf[0..len],
+    );
+}
+
+test "serializeHeader: file response with keep-alive" {
+    var buf: [256]u8 = undefined;
+    const len = serializeHeader(.ok, 1234, &buf, false);
+
+    try testing.expectEqualStrings(
+        "HTTP/1.1 200 OK\r\nContent-Length: 1234\r\n\r\n",
+        buf[0..len],
+    );
+}
+
+test "serialize: head-style empty body preserves content-length" {
+    var buf: [256]u8 = undefined;
+    const res = Response{ .status = .ok, .body = .{ .slice = "" }, .content_length = 42 };
+    const len = serialize(res, &buf, true);
+
+    try testing.expectEqualStrings(
+        "HTTP/1.1 200 OK\r\nContent-Length: 42\r\nConnection: close\r\n\r\n",
         buf[0..len],
     );
 }

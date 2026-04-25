@@ -17,11 +17,7 @@ pub const Response = @import("response.zig").Response;
 const Method = @import("request.zig").Method;
 
 /// Capabilities passed to handler. No IO. No behavior.
-pub const Context = struct {
-    // Start empty. Add as needed:
-    // allocator: ?Allocator,
-    // config: *const Config,
-};
+pub const Context = struct {};
 
 /// Handler boundary. Pure function.
 /// All extensions (proxy, app, thread pool) go through here.
@@ -40,7 +36,8 @@ pub fn dispatch(ctx: *Context, req: Request) anyerror!Response {
 
 const method_not_allowed: Response = .{
     .status = .method_not_allowed,
-    .body = "",
+    .body = .{ .slice = "" },
+    .content_length = 0,
 };
 
 // =============================================================================
@@ -63,19 +60,13 @@ const table = struct {
 
 const get_service = @import("service/get.zig");
 
-fn handleGet(_: *Context, req: Request) anyerror!Response {
+fn handleGet(ctx: *Context, req: Request) anyerror!Response {
     // Per-request stack buffer.
     // Safe because response is consumed synchronously.
-    var buf: [4096]u8 = undefined;
-    return get_service.handle(req, &buf);
+    var buf: [get_service.SMALL_FILE_LIMIT]u8 = undefined;
+    return get_service.handle(ctx, req, &buf);
 }
 
-fn handleHead(_: *Context, req: Request) anyerror!Response {
-    // Per-request stack buffer.
-    // Safe because response is consumed synchronously.
-    var buf: [4096]u8 = undefined;
-    const res = get_service.handle(req, &buf);
-    // HEAD: same status, no body.
-    // TODO: preserve Content-Length for strict compliance.
-    return .{ .status = res.status, .body = "" };
+fn handleHead(ctx: *Context, req: Request) anyerror!Response {
+    return get_service.handleHead(ctx, req);
 }
