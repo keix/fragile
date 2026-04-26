@@ -1,8 +1,8 @@
 // responsibility:
-//   defines Response and serializes to bytes
+//   defines Response and serializes header to bytes
 //
 // guarantees:
-//   - pure function (serialize)
+//   - pure function (serializeHeader)
 //   - writes to provided buffer
 //   - no allocation
 //
@@ -50,39 +50,10 @@ const status_lines = struct {
     }
 };
 
-// Suffixes (keep-alive is hot path, close is cold)
 const suffix_keepalive = "\r\n\r\n";
 const suffix_close = "\r\nConnection: close\r\n\r\n";
 
-/// Get status line for writev
-pub inline fn getStatusLine(status: Status) []const u8 {
-    return status_lines.get(status);
-}
-
-/// Get suffix for writev
-pub inline fn getSuffix(close: bool) []const u8 {
-    return if (close) suffix_close else suffix_keepalive;
-}
-
-/// Write integer to buffer (public for writev)
-pub inline fn writeIntPublic(buf: *[20]u8, value: usize) usize {
-    return writeInt(buf, value);
-}
-
-/// Serialize Response into bytes. Pure function.
-/// close: if true, includes "Connection: close" header
-/// NOTE: Only for slice body. File body uses serializeHeader + sendfile.
-pub inline fn serialize(res: Response, out: []u8, close: bool) usize {
-    // Hot path: keep-alive (99% of requests)
-    // Cold path: close (only on error or max requests)
-    if (close) {
-        return serializeClose(res, out);
-    } else {
-        return serializeKeepAlive(res, out);
-    }
-}
-
-/// Serialize header only (for file body, followed by sendfile).
+/// Serialize header only (body sent via writev or sendfile).
 pub inline fn serializeHeader(status: Status, content_length: usize, out: []u8, close: bool) usize {
     var pos: usize = 0;
 
@@ -95,54 +66,6 @@ pub inline fn serializeHeader(status: Status, content_length: usize, out: []u8, 
     const suffix = if (close) suffix_close else suffix_keepalive;
     @memcpy(out[pos..][0..suffix.len], suffix);
     pos += suffix.len;
-
-    return pos;
-}
-
-/// Hot path: keep-alive (branch-free)
-inline fn serializeKeepAlive(res: Response, out: []u8) usize {
-    const body_slice = switch (res.body) {
-        .slice => |s| s,
-        .file => unreachable,
-    };
-
-    var pos: usize = 0;
-
-    const status_line = status_lines.get(res.status);
-    @memcpy(out[pos..][0..status_line.len], status_line);
-    pos += status_line.len;
-
-    pos += writeInt(out[pos..], res.content_length);
-
-    @memcpy(out[pos..][0..suffix_keepalive.len], suffix_keepalive);
-    pos += suffix_keepalive.len;
-
-    @memcpy(out[pos..][0..body_slice.len], body_slice);
-    pos += body_slice.len;
-
-    return pos;
-}
-
-/// Cold path: close
-inline fn serializeClose(res: Response, out: []u8) usize {
-    const body_slice = switch (res.body) {
-        .slice => |s| s,
-        .file => unreachable,
-    };
-
-    var pos: usize = 0;
-
-    const status_line = status_lines.get(res.status);
-    @memcpy(out[pos..][0..status_line.len], status_line);
-    pos += status_line.len;
-
-    pos += writeInt(out[pos..], res.content_length);
-
-    @memcpy(out[pos..][0..suffix_close.len], suffix_close);
-    pos += suffix_close.len;
-
-    @memcpy(out[pos..][0..body_slice.len], body_slice);
-    pos += body_slice.len;
 
     return pos;
 }
@@ -201,61 +124,7 @@ inline fn writeInt(buf: []u8, value: usize) usize {
 
 const testing = @import("std").testing;
 
-test "serialize: 200 OK with close" {
-    var buf: [256]u8 = undefined;
-    const res = Response{ .status = .ok, .body = .{ .slice = "Hello" }, .content_length = 5 };
-    const len = serialize(res, &buf, true);
-
-    try testing.expectEqualStrings(
-        "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nHello",
-        buf[0..len],
-    );
-}
-
-test "serialize: 200 OK keep-alive" {
-    var buf: [256]u8 = undefined;
-    const res = Response{ .status = .ok, .body = .{ .slice = "Hello" }, .content_length = 5 };
-    const len = serialize(res, &buf, false);
-
-    try testing.expectEqualStrings(
-        "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nHello",
-        buf[0..len],
-    );
-}
-
-test "serialize: 400 Bad Request" {
-    var buf: [256]u8 = undefined;
-    const len = serialize(bad_request, &buf, true);
-
-    try testing.expectEqualStrings(
-        "HTTP/1.1 400 Bad Request\r\nContent-Length: 11\r\nConnection: close\r\n\r\nBad Request",
-        buf[0..len],
-    );
-}
-
-test "serialize: 404 Not Found" {
-    var buf: [256]u8 = undefined;
-    const res = Response{ .status = .not_found, .body = .{ .slice = "Not Found" }, .content_length = 9 };
-    const len = serialize(res, &buf, true);
-
-    try testing.expectEqualStrings(
-        "HTTP/1.1 404 Not Found\r\nContent-Length: 9\r\nConnection: close\r\n\r\nNot Found",
-        buf[0..len],
-    );
-}
-
-test "serialize: empty body" {
-    var buf: [256]u8 = undefined;
-    const res = Response{ .status = .ok, .body = .{ .slice = "" }, .content_length = 0 };
-    const len = serialize(res, &buf, true);
-
-    try testing.expectEqualStrings(
-        "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-        buf[0..len],
-    );
-}
-
-test "serializeHeader: file response with keep-alive" {
+test "serializeHeader: 200 OK keep-alive" {
     var buf: [256]u8 = undefined;
     const len = serializeHeader(.ok, 1234, &buf, false);
 
@@ -265,13 +134,22 @@ test "serializeHeader: file response with keep-alive" {
     );
 }
 
-test "serialize: head-style empty body preserves content-length" {
+test "serializeHeader: 200 OK with close" {
     var buf: [256]u8 = undefined;
-    const res = Response{ .status = .ok, .body = .{ .slice = "" }, .content_length = 42 };
-    const len = serialize(res, &buf, true);
+    const len = serializeHeader(.ok, 5, &buf, true);
 
     try testing.expectEqualStrings(
-        "HTTP/1.1 200 OK\r\nContent-Length: 42\r\nConnection: close\r\n\r\n",
+        "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\n",
+        buf[0..len],
+    );
+}
+
+test "serializeHeader: 404 Not Found" {
+    var buf: [256]u8 = undefined;
+    const len = serializeHeader(.not_found, 9, &buf, true);
+
+    try testing.expectEqualStrings(
+        "HTTP/1.1 404 Not Found\r\nContent-Length: 9\r\nConnection: close\r\n\r\n",
         buf[0..len],
     );
 }

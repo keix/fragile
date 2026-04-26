@@ -155,8 +155,9 @@ pub const Loop = struct {
 
     fn handleWrite(self: *Loop, conn: *Connection) void {
         while (true) {
-            const before = conn.write_pos;
-            const done = conn.write() catch |err| switch (err) {
+            const before_header = conn.write_pos;
+            const before_body = conn.body_pos;
+            const done = conn.writev() catch |err| switch (err) {
                 error.WouldBlock => {
                     self.armWrite(conn);
                     return;
@@ -167,7 +168,7 @@ pub const Loop = struct {
                 },
             };
 
-            if (!done and conn.write_pos == before) {
+            if (!done and conn.write_pos == before_header and conn.body_pos == before_body) {
                 self.closeConnection(conn);
                 return;
             }
