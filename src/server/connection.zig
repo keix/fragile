@@ -9,6 +9,8 @@
 //   - no protocol logic
 //   - no parsing
 
+const std = @import("std");
+const posix = std.posix;
 const sys_fd = @import("../net/sys/fd.zig");
 
 pub const State = enum {
@@ -32,6 +34,8 @@ pub const Connection = struct {
     file_sent: usize,
     file_owned: bool,
     write_armed: bool,
+    body_slice: []const u8,
+    body_pos: usize,
 
     pub fn init(fd: i32) Connection {
         return .{
@@ -49,6 +53,8 @@ pub const Connection = struct {
             .file_sent = 0,
             .file_owned = false,
             .write_armed = false,
+            .body_slice = &.{},
+            .body_pos = 0,
         };
     }
 
@@ -62,6 +68,8 @@ pub const Connection = struct {
         self.file_sent = 0;
         self.file_owned = false;
         self.write_armed = false;
+        self.body_slice = &.{};
+        self.body_pos = 0;
         self.state = .reading;
     }
 
@@ -75,14 +83,39 @@ pub const Connection = struct {
         return n;
     }
 
-    pub fn write(self: *Connection) !bool {
-        const remaining = self.write_buf[self.write_pos..self.write_len];
-        if (remaining.len == 0) return true;
-        const n = try sys_fd.write(self.fd, remaining);
-        self.write_pos += n;
-        return self.write_pos >= self.write_len;
+    /// Write header + body via writev (slice body only)
+    pub fn writev(self: *Connection) !bool {
+        const header_remaining = self.write_buf[self.write_pos..self.write_len];
+        const body_remaining = self.body_slice[self.body_pos..];
+
+        if (header_remaining.len == 0 and body_remaining.len == 0) return true;
+
+        var iovecs: [2]posix.iovec_const = .{ undefined, undefined };
+        var iov_count: usize = 0;
+
+        if (header_remaining.len > 0) {
+            iovecs[iov_count] = .{ .base = header_remaining.ptr, .len = header_remaining.len };
+            iov_count += 1;
+        }
+        if (body_remaining.len > 0) {
+            iovecs[iov_count] = .{ .base = body_remaining.ptr, .len = body_remaining.len };
+            iov_count += 1;
+        }
+
+        const n = try sys_fd.writev(self.fd, iovecs[0..iov_count]);
+        if (n == 0) return false; // no progress, wait for EPOLLOUT
+
+        if (n <= header_remaining.len) {
+            self.write_pos += n;
+        } else {
+            self.write_pos = self.write_len;
+            self.body_pos += n - header_remaining.len;
+        }
+
+        return self.write_pos >= self.write_len and self.body_pos >= self.body_slice.len;
     }
 
+    /// Send file body via sendfile (large files only)
     pub fn sendFile(self: *Connection) !bool {
         const remaining = self.file_size - self.file_sent;
         if (remaining == 0) return true;
@@ -107,17 +140,22 @@ pub const Connection = struct {
         return self.read_buf[0..self.read_pos];
     }
 
-    /// Prepare response for writing (serialize into write buffer)
+    /// Prepare response for writing.
+    /// - slice body: header + body sent via writev
+    /// - file body: header sent via writev, body sent via sendfile
     pub fn prepareResponse(self: *Connection, res: response.Response, conn_close: bool) void {
+        self.write_len = response.serializeHeader(res.status, res.content_length, &self.write_buf, conn_close);
+        self.write_pos = 0;
+
         switch (res.body) {
-            .slice => {
-                self.write_len = response.serialize(res, &self.write_buf, conn_close);
-                self.write_pos = 0;
+            .slice => |s| {
+                self.body_slice = s;
+                self.body_pos = 0;
                 self.state = .writing;
             },
             .file => |f| {
-                self.write_len = response.serializeHeader(res.status, res.content_length, &self.write_buf, conn_close);
-                self.write_pos = 0;
+                self.body_slice = &.{}; // no body via writev
+                self.body_pos = 0;
                 self.file_fd = f.fd;
                 self.file_size = f.size;
                 self.file_sent = 0;
