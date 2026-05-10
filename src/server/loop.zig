@@ -23,6 +23,7 @@ const sys_fd = @import("../net/sys/fd.zig");
 
 const Connection = @import("connection.zig").Connection;
 const response_writer = @import("response_writer.zig");
+const driver = @import("connection_driver.zig");
 const parser = @import("../http/parser.zig");
 const response = @import("../http/response.zig");
 const handler = @import("../http/handler.zig");
@@ -108,8 +109,7 @@ pub const Loop = struct {
 
         switch (conn.state) {
             .reading => self.handleRead(conn),
-            .writing => self.handleWrite(conn),
-            .sending_file => self.handleSendFile(conn),
+            .writing, .sending_file => self.handleWritable(conn),
         }
     }
 
@@ -154,11 +154,15 @@ pub const Loop = struct {
         self.sendResponse(conn, res);
     }
 
-    fn handleWrite(self: *Loop, conn: *Connection) void {
+    fn handleWritable(self: *Loop, conn: *Connection) void {
         while (true) {
-            const before_header = conn.out.header_pos;
-            const before_body = conn.out.body_pos;
-            const done = conn.writev() catch |err| switch (err) {
+            const result = switch (conn.state) {
+                .writing => driver.driveWrite(conn),
+                .sending_file => driver.driveSendFile(conn),
+                .reading => unreachable,
+            };
+
+            const step = result catch |err| switch (err) {
                 error.WouldBlock => {
                     self.armWrite(conn);
                     return;
@@ -169,61 +173,30 @@ pub const Loop = struct {
                 },
             };
 
-            if (!done and conn.out.header_pos == before_header and conn.out.body_pos == before_body) {
-                self.closeConnection(conn);
-                return;
-            }
-
-            if (!done) continue;
-
-            if (conn.hasFileBody()) {
-                conn.state = .sending_file;
-                self.handleSendFile(conn);
-            } else {
-                self.finishResponse(conn);
-            }
-            return;
-        }
-    }
-
-    fn handleSendFile(self: *Loop, conn: *Connection) void {
-        while (true) {
-            const done = conn.sendFile() catch |err| switch (err) {
-                error.WouldBlock => {
-                    self.armWrite(conn);
+            switch (step) {
+                .again => continue,
+                .rearm_read => {
+                    self.armRead(conn) catch {
+                        self.closeConnection(conn);
+                        return;
+                    };
                     return;
                 },
-                else => {
+                .close => {
                     self.closeConnection(conn);
                     return;
                 },
-            };
-
-            if (done) {
-                conn.file.close();
-                self.finishResponse(conn);
-                return;
             }
-        }
-    }
-
-    fn finishResponse(self: *Loop, conn: *Connection) void {
-        if (conn.keep_alive and conn.requests_served < MAX_REQUESTS_PER_CONN) {
-            self.armRead(conn) catch {
-                self.closeConnection(conn);
-                return;
-            };
-            conn.reset();
-        } else {
-            self.closeConnection(conn);
         }
     }
 
     fn sendResponse(self: *Loop, conn: *Connection, res: Response) void {
-        const close = !conn.keep_alive or conn.requests_served >= MAX_REQUESTS_PER_CONN;
-        response_writer.prepare(conn, res, close);
+        if (conn.requests_served >= MAX_REQUESTS_PER_CONN) {
+            conn.keep_alive = false;
+        }
+        response_writer.prepare(conn, res, !conn.keep_alive);
         conn.state = .writing;
-        self.handleWrite(conn);
+        self.handleWritable(conn);
     }
 
     fn armWrite(self: *Loop, conn: *Connection) void {
