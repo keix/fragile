@@ -8,6 +8,7 @@
 // non-goals:
 //   - no protocol logic
 //   - no parsing
+//   - no HTTP knowledge
 
 const std = @import("std");
 const posix = std.posix;
@@ -19,23 +20,89 @@ pub const State = enum {
     sending_file,
 };
 
+// =============================================================================
+// FileSend: file body send state
+// =============================================================================
+
+pub const FileSend = struct {
+    fd: i32 = -1,
+    size: usize = 0,
+    sent: usize = 0,
+    owned: bool = false,
+
+    pub fn active(self: FileSend) bool {
+        return self.fd >= 0;
+    }
+
+    pub fn remaining(self: FileSend) usize {
+        return self.size - self.sent;
+    }
+
+    pub fn done(self: FileSend) bool {
+        return self.sent >= self.size;
+    }
+
+    pub fn close(self: *FileSend) void {
+        if (self.fd >= 0 and self.owned) {
+            sys_fd.close(self.fd);
+        }
+        self.* = .{};
+    }
+};
+
+// =============================================================================
+// Outgoing: response write state
+// =============================================================================
+
+pub const Outgoing = struct {
+    header_buf: [1024]u8 = undefined,
+    header_len: usize = 0,
+    header_pos: usize = 0,
+
+    body_slice: []const u8 = &.{},
+    body_pos: usize = 0,
+
+    scratch: [SCRATCH_SIZE]u8 = undefined,
+
+    pub const SCRATCH_SIZE = 8192;
+
+    pub fn reset(self: *Outgoing) void {
+        self.header_len = 0;
+        self.header_pos = 0;
+        self.body_slice = &.{};
+        self.body_pos = 0;
+    }
+
+    pub fn headerRemaining(self: *const Outgoing) []const u8 {
+        return self.header_buf[self.header_pos..self.header_len];
+    }
+
+    pub fn bodyRemaining(self: *const Outgoing) []const u8 {
+        return self.body_slice[self.body_pos..];
+    }
+
+    pub fn done(self: *const Outgoing) bool {
+        return self.header_pos >= self.header_len and self.body_pos >= self.body_slice.len;
+    }
+};
+
+// =============================================================================
+// Connection
+// =============================================================================
+
 pub const Connection = struct {
     fd: i32,
     state: State,
+
     read_buf: [4096]u8,
     read_pos: usize,
-    write_buf: [1024]u8,
-    write_len: usize,
-    write_pos: usize,
+
     keep_alive: bool,
     requests_served: usize,
-    file_fd: i32,
-    file_size: usize,
-    file_sent: usize,
-    file_owned: bool,
     write_armed: bool,
-    body_slice: []const u8,
-    body_pos: usize,
+
+    out: Outgoing,
+    file: FileSend,
 
     pub fn init(fd: i32) Connection {
         return .{
@@ -43,33 +110,20 @@ pub const Connection = struct {
             .state = .reading,
             .read_buf = undefined,
             .read_pos = 0,
-            .write_buf = undefined,
-            .write_len = 0,
-            .write_pos = 0,
             .keep_alive = true,
             .requests_served = 0,
-            .file_fd = -1,
-            .file_size = 0,
-            .file_sent = 0,
-            .file_owned = false,
             .write_armed = false,
-            .body_slice = &.{},
-            .body_pos = 0,
+            .out = .{},
+            .file = .{},
         };
     }
 
     /// Reset for next request (keep-alive)
     pub fn reset(self: *Connection) void {
-        self.closeFile();
+        self.file.close();
         self.read_pos = 0;
-        self.write_len = 0;
-        self.write_pos = 0;
-        self.file_size = 0;
-        self.file_sent = 0;
-        self.file_owned = false;
         self.write_armed = false;
-        self.body_slice = &.{};
-        self.body_pos = 0;
+        self.out.reset();
         self.state = .reading;
     }
 
@@ -85,8 +139,8 @@ pub const Connection = struct {
 
     /// Write header + body via writev (slice body only)
     pub fn writev(self: *Connection) !bool {
-        const header_remaining = self.write_buf[self.write_pos..self.write_len];
-        const body_remaining = self.body_slice[self.body_pos..];
+        const header_remaining = self.out.headerRemaining();
+        const body_remaining = self.out.bodyRemaining();
 
         if (header_remaining.len == 0 and body_remaining.len == 0) return true;
 
@@ -106,33 +160,25 @@ pub const Connection = struct {
         if (n == 0) return false; // no progress, wait for EPOLLOUT
 
         if (n <= header_remaining.len) {
-            self.write_pos += n;
+            self.out.header_pos += n;
         } else {
-            self.write_pos = self.write_len;
-            self.body_pos += n - header_remaining.len;
+            self.out.header_pos = self.out.header_len;
+            self.out.body_pos += n - header_remaining.len;
         }
 
-        return self.write_pos >= self.write_len and self.body_pos >= self.body_slice.len;
+        return self.out.done();
     }
 
     /// Send file body via sendfile (large files only)
     pub fn sendFile(self: *Connection) !bool {
-        const remaining = self.file_size - self.file_sent;
-        if (remaining == 0) return true;
+        if (self.file.remaining() == 0) return true;
 
-        _ = try sys_fd.sendfile(self.fd, self.file_fd, &self.file_sent, remaining);
-        return self.file_sent >= self.file_size;
-    }
-
-    pub fn closeFile(self: *Connection) void {
-        if (self.file_fd >= 0 and self.file_owned) {
-            sys_fd.close(self.file_fd);
-        }
-        self.file_fd = -1;
+        _ = try sys_fd.sendfile(self.fd, self.file.fd, &self.file.sent, self.file.remaining());
+        return self.file.done();
     }
 
     pub fn close(self: *Connection) void {
-        self.closeFile();
+        self.file.close();
         sys_fd.close(self.fd);
     }
 
@@ -140,37 +186,16 @@ pub const Connection = struct {
         return self.read_buf[0..self.read_pos];
     }
 
-    /// Prepare response for writing.
-    /// - slice body: header + body sent via writev
-    /// - file body: header sent via writev, body sent via sendfile
-    pub fn prepareResponse(self: *Connection, res: response.Response, conn_close: bool) void {
-        self.write_len = response.serializeHeader(res.status, res.content_length, &self.write_buf, conn_close);
-        self.write_pos = 0;
-
-        switch (res.body) {
-            .slice => |s| {
-                self.body_slice = s;
-                self.body_pos = 0;
-                self.state = .writing;
-            },
-            .file => |f| {
-                self.body_slice = &.{}; // no body via writev
-                self.body_pos = 0;
-                self.file_fd = f.fd;
-                self.file_size = f.size;
-                self.file_sent = 0;
-                self.file_owned = f.owned;
-                self.state = .writing;
-            },
-        }
+    /// Scratch buffer for response body.
+    /// Lifetime: valid until response write completes.
+    pub fn scratch(self: *Connection) []u8 {
+        return &self.out.scratch;
     }
 
     pub fn hasFileBody(self: *Connection) bool {
-        return self.file_fd >= 0;
+        return self.file.active();
     }
 };
-
-const response = @import("../http/response.zig");
 
 // =============================================================================
 // Tests
@@ -183,8 +208,8 @@ test "init: default state is reading" {
     try testing.expectEqual(State.reading, conn.state);
     try testing.expectEqual(@as(i32, 42), conn.fd);
     try testing.expectEqual(@as(usize, 0), conn.read_pos);
-    try testing.expectEqual(@as(usize, 0), conn.write_len);
-    try testing.expectEqual(@as(usize, 0), conn.write_pos);
+    try testing.expectEqual(@as(usize, 0), conn.out.header_len);
+    try testing.expectEqual(@as(usize, 0), conn.out.header_pos);
 }
 
 test "buffer: returns read data" {
@@ -198,4 +223,28 @@ test "buffer: returns read data" {
 test "buffer: empty when no data" {
     var conn = Connection.init(0);
     try testing.expectEqualStrings("", conn.buffer());
+}
+
+test "FileSend: active when fd >= 0" {
+    var fs = FileSend{};
+    try testing.expect(!fs.active());
+    fs.fd = 5;
+    try testing.expect(fs.active());
+}
+
+test "Outgoing: done when all sent" {
+    var out = Outgoing{};
+    try testing.expect(out.done());
+
+    out.header_len = 10;
+    try testing.expect(!out.done());
+
+    out.header_pos = 10;
+    try testing.expect(out.done());
+
+    out.body_slice = "hello";
+    try testing.expect(!out.done());
+
+    out.body_pos = 5;
+    try testing.expect(out.done());
 }

@@ -15,14 +15,15 @@ const Request = @import("../request.zig").Request;
 const Response = @import("../response.zig").Response;
 const Context = @import("../handler.zig").Context;
 const fd = @import("../../net/sys/fd.zig");
-pub const SMALL_FILE_LIMIT = 8192;
 
 // Environment-provided or default. Lifetime is static.
 fn getRoot() []const u8 {
     return std.posix.getenv("FRAGILE_ROOT") orelse "./public";
 }
 
-pub fn handle(ctx: *const Context, req: Request, buf: *[SMALL_FILE_LIMIT]u8) Response {
+/// Handle GET request.
+/// `scratch` is connection-owned buffer for small response bodies.
+pub fn handle(ctx: *const Context, req: Request, scratch: []u8) Response {
     _ = ctx;
 
     var path_buf: [256]u8 = undefined;
@@ -35,8 +36,9 @@ pub fn handle(ctx: *const Context, req: Request, buf: *[SMALL_FILE_LIMIT]u8) Res
         return not_found;
     };
 
-    if (file_size <= SMALL_FILE_LIMIT) {
-        const body = buf[0..file_size];
+    // Small file: read into scratch buffer
+    if (file_size <= scratch.len) {
+        const body = scratch[0..file_size];
         const n = fd.read(file, body) catch {
             fd.close(file);
             return not_found;
@@ -52,6 +54,7 @@ pub fn handle(ctx: *const Context, req: Request, buf: *[SMALL_FILE_LIMIT]u8) Res
         };
     }
 
+    // Large file: sendfile path
     return .{
         .status = .ok,
         .body = .{ .file = .{ .fd = file, .size = file_size, .owned = true } },

@@ -21,7 +21,20 @@ pub const Context = struct {};
 
 /// Handler boundary. Pure function.
 /// All extensions (proxy, app, thread pool) go through here.
-pub const Handler = *const fn (*Context, Request) anyerror!Response;
+///
+/// `scratch` is temporary response storage owned by the Connection.
+/// A Response may reference `scratch`, but only until the response is written.
+/// The server consumes Response synchronously before reusing the buffer.
+///
+/// Response may borrow from:
+/// - static memory
+/// - scratch buffer (connection-owned)
+/// - sendfile fd (connection consumes it)
+///
+/// Response must not borrow from:
+/// - handler stack
+/// - temporary local arrays
+pub const Handler = *const fn (*Context, Request, []u8) anyerror!Response;
 
 // =============================================================================
 // Dispatch (table lookup only)
@@ -29,9 +42,9 @@ pub const Handler = *const fn (*Context, Request) anyerror!Response;
 
 /// Dispatch requests to services.
 /// Routing only. No logic. Does not grow with features.
-pub fn dispatch(ctx: *Context, req: Request) anyerror!Response {
+pub fn dispatch(ctx: *Context, req: Request, scratch: []u8) anyerror!Response {
     const handler = table.get(req.method) orelse return method_not_allowed;
-    return handler(ctx, req);
+    return handler(ctx, req, scratch);
 }
 
 const method_not_allowed: Response = .{
@@ -60,13 +73,11 @@ const table = struct {
 
 const get_service = @import("service/get.zig");
 
-fn handleGet(ctx: *Context, req: Request) anyerror!Response {
-    // Per-request stack buffer.
-    // Safe because response is consumed synchronously.
-    var buf: [get_service.SMALL_FILE_LIMIT]u8 = undefined;
-    return get_service.handle(ctx, req, &buf);
+fn handleGet(ctx: *Context, req: Request, scratch: []u8) anyerror!Response {
+    return get_service.handle(ctx, req, scratch);
 }
 
-fn handleHead(ctx: *Context, req: Request) anyerror!Response {
+fn handleHead(ctx: *Context, req: Request, scratch: []u8) anyerror!Response {
+    _ = scratch;
     return get_service.handleHead(ctx, req);
 }

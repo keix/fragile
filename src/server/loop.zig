@@ -22,6 +22,7 @@ const Listener = @import("../net/listener.zig").Listener;
 const sys_fd = @import("../net/sys/fd.zig");
 
 const Connection = @import("connection.zig").Connection;
+const response_writer = @import("response_writer.zig");
 const parser = @import("../http/parser.zig");
 const response = @import("../http/response.zig");
 const handler = @import("../http/handler.zig");
@@ -145,7 +146,7 @@ pub const Loop = struct {
             true;
         conn.requests_served += 1;
 
-        const res = self.handler(&self.ctx, req) catch {
+        const res = self.handler(&self.ctx, req, conn.scratch()) catch {
             self.closeConnection(conn);
             return;
         };
@@ -155,8 +156,8 @@ pub const Loop = struct {
 
     fn handleWrite(self: *Loop, conn: *Connection) void {
         while (true) {
-            const before_header = conn.write_pos;
-            const before_body = conn.body_pos;
+            const before_header = conn.out.header_pos;
+            const before_body = conn.out.body_pos;
             const done = conn.writev() catch |err| switch (err) {
                 error.WouldBlock => {
                     self.armWrite(conn);
@@ -168,7 +169,7 @@ pub const Loop = struct {
                 },
             };
 
-            if (!done and conn.write_pos == before_header and conn.body_pos == before_body) {
+            if (!done and conn.out.header_pos == before_header and conn.out.body_pos == before_body) {
                 self.closeConnection(conn);
                 return;
             }
@@ -199,7 +200,7 @@ pub const Loop = struct {
             };
 
             if (done) {
-                conn.closeFile();
+                conn.file.close();
                 self.finishResponse(conn);
                 return;
             }
@@ -220,7 +221,8 @@ pub const Loop = struct {
 
     fn sendResponse(self: *Loop, conn: *Connection, res: Response) void {
         const close = !conn.keep_alive or conn.requests_served >= MAX_REQUESTS_PER_CONN;
-        conn.prepareResponse(res, close);
+        response_writer.prepare(conn, res, close);
+        conn.state = .writing;
         self.handleWrite(conn);
     }
 
