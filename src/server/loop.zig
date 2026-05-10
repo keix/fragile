@@ -222,6 +222,7 @@ pub const Loop = struct {
     fn sendResponse(self: *Loop, conn: *Connection, res: Response) void {
         const close = !conn.keep_alive or conn.requests_served >= MAX_REQUESTS_PER_CONN;
         response_writer.prepare(conn, res, close);
+        conn.state = .writing;
         self.handleWrite(conn);
     }
 
